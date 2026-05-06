@@ -4,6 +4,7 @@ import { wt } from "@/transport";
 import { App } from "@/App";
 import "@/styles/tokens.css";
 import "@/styles/atoms.css";
+import "@/styles/desktop.css";
 
 // Expose wt to window for devtools probing during scaffold phase.
 // (Real wiring lands in Phase 3+ store / connection state.)

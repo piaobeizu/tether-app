@@ -1,0 +1,399 @@
+/* ============================================================
+   Desktop three-column layout (§11.Y D-19).
+   workspaces · skill artifact · chat
+   ============================================================ */
+
+.dt-root {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 38px auto 1fr 22px;
+  color: var(--ink-primary);
+}
+
+/* -------- title bar -------- */
+
+.dt-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.dt-traffic { display: flex; gap: 6px; }
+.dt-traffic span { width: 11px; height: 11px; border-radius: 999px; }
+.dt-tabs { display: flex; gap: 2px; align-items: center; }
+.dt-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--ink-tertiary);
+  border-radius: 4px;
+}
+.dt-tab.on {
+  background: var(--bg-app);
+  color: var(--ink-primary);
+  font-weight: 500;
+}
+.dt-titlebar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.icon-btn,
+.icon-btn-sm {
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon-btn:hover,
+.icon-btn-sm:hover {
+  background: var(--bg-tint);
+  color: var(--ink-primary);
+}
+.icon-btn-sm { padding: 3px; }
+
+/* -------- main grid -------- */
+
+.dt-grid {
+  display: grid;
+  grid-template-columns: 240px 1fr 380px;
+  min-height: 0;
+}
+
+/* -------- left: workspaces -------- */
+
+.dt-left {
+  background: var(--bg-sunken);
+  border-right: 1px solid var(--line);
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  min-height: 0;
+}
+.dt-left-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+}
+.section-label {
+  font-size: 10.5px;
+  color: var(--ink-tertiary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.dt-search {
+  margin: 0 10px 8px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-app);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  font-size: 12px;
+}
+.dt-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-primary);
+}
+.dt-tree {
+  padding: 2px 0 8px;
+  overflow: auto;
+  min-height: 0;
+}
+.dt-left-foot {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* -------- workspace tree row -------- */
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding-right: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.tree-row:hover {
+  background: var(--bg-tint);
+  color: var(--ink-primary);
+}
+.tree-row.active {
+  background: var(--accent-tint);
+  color: var(--accent-deep);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.ws-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ink-quat);
+}
+.ws-dot.live {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(47, 125, 91, 0.2);
+}
+.file-glyph {
+  color: var(--ink-quat);
+  font-size: 13px;
+  line-height: 1;
+  width: 13px;
+  text-align: center;
+}
+.tree-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  margin-left: auto;
+}
+
+/* -------- middle: skill artifact -------- */
+
+.dt-mid {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  background: var(--bg-app);
+}
+.dt-mid-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.dt-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.crumb-faint { color: var(--ink-tertiary); }
+.crumb-sep { color: var(--ink-quat); }
+.crumb { color: var(--ink-primary); font-weight: 500; }
+.dt-mid-actions { display: flex; gap: 6px; }
+.dt-mid-body {
+  padding: 24px 32px 32px;
+  overflow: auto;
+  min-height: 0;
+}
+.skill-title-block {
+  margin-bottom: 22px;
+  max-width: 720px;
+}
+.skill-title {
+  font-size: 32px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  font-weight: 400;
+  color: var(--ink-primary);
+  font-style: italic;
+}
+.skill-sub {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--ink-secondary);
+  line-height: 1.55;
+  max-width: 620px;
+}
+
+/* -------- right: chat -------- */
+
+.dt-right {
+  background: var(--bg-surface);
+  border-left: 1px solid var(--line);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 0;
+}
+.dt-right-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.dt-chat {
+  padding: 18px 16px 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+}
+
+/* -------- composer -------- */
+
+.dt-composer {
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--bg-surface);
+  position: relative;
+}
+.composer-box {
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--ink-primary);
+  border-radius: var(--r-3);
+  padding: 8px 10px 6px;
+}
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+}
+.composer-prefix {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 14px;
+}
+.composer-input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-primary);
+  border: 0;
+  outline: none;
+  background: transparent;
+}
+.send-btn {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  cursor: pointer;
+  background: var(--ink-primary);
+  color: var(--bg-elevated);
+  border-radius: var(--r-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-foot {
+  display: flex;
+  gap: 12px;
+  padding: 4px 4px 0;
+  border-top: 1px dashed var(--line-soft);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+/* -------- slash popover -------- */
+
+.slash-pop {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(100% - 8px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--sh-pop);
+  overflow: hidden;
+  z-index: 5;
+}
+.slash-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11px;
+  color: var(--ink-tertiary);
+}
+.slash-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.slash-row.on,
+.slash-row:hover {
+  background: var(--accent-tint);
+}
+.slash-row .accent {
+  color: var(--accent);
+  font-weight: 600;
+}
+.slash-desc { color: var(--ink-secondary); }
+
+/* -------- status bar -------- */
+
+.dt-statusbar {
+  display: flex;
+  align-items: center;
+  background: var(--ink-primary);
+  color: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 0 10px;
+}
+.sb-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  height: 22px;
+}
+.sb-cell .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ink-quat);
+}
+.sb-cell .dot.live { background: var(--success); }
+
+/* -------- error banner (shown above the grid when daemon is not live) -------- */
+
+.dt-error-banner {
+  padding: 6px 16px;
+  background: var(--warn-tint);
+  border-bottom: 1px solid #e7d3a4;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dt-error-banner .pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--warn);
+  animation: pulse 1s infinite;
+}
