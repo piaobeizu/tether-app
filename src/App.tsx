@@ -1,17 +1,20 @@
-// Phase-5 — desktop + mobile side-by-side on a design canvas.
+// Phase-6 — full canvas: desktop + mobile-main side-by-side, with
+// pair flow (desktop initiator + mobile companion) below.
 //
-// Both surfaces share the Phase-2 zustand store, so a message sent
-// from one shows in the other; the chat-block compact renderers in
-// mobile/desktop both expand into the same skill detail (skill push
-// on mobile / artifact pane on desktop).
+// Both halves of §11.Y share the Phase-2 zustand store; the pair
+// flow rides on the same store (pairCode / pairTtl auto-tick from
+// store/timers; pairMobileStep state machine). Tap the mobile
+// scan-frame to advance scan → confirm → success; the success state
+// auto-resets after 3s.
 //
-// Phase 6 adds pair flow (desktop initiator + mobile companion).
-// Phase 7 brings settings + errors. Phase 8 adds animation polish
-// + tree virtualization.
+// Phase 7 brings settings + errors. Phase 8 adds animation polish +
+// tree virtualization + tests.
 
 import { useEffect, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
 import { MobileMain } from "@/components/mobile/MobileMain";
+import { PairDesktop } from "@/components/pair/PairDesktop";
+import { PairMobile } from "@/components/pair/PairMobile";
 import { startMockTimers } from "@/store/timers";
 
 export function App() {
@@ -42,7 +45,7 @@ export function App() {
             letterSpacing: "0.04em",
           }}
         >
-          Phase&nbsp;5 — desktop + mobile (§11.Y / D-19)
+          Phase&nbsp;6 — desktop + mobile + pair flow (§11.Y / §11.J)
         </span>
         <button
           type="button"
@@ -69,6 +72,23 @@ export function App() {
           <Desktop />
         </div>
         <MobileMain />
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          gap: 32,
+          alignItems: "flex-start",
+          maxWidth: 1800,
+          width: "100%",
+          margin: "32px auto 0",
+        }}
+      >
+        <div style={{ minHeight: 540, display: "grid" }}>
+          <PairDesktop />
+        </div>
+        <PairMobile />
       </div>
     </div>
   );
