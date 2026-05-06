@@ -29,7 +29,12 @@ const reset = () => {
     wtState: "live",
     connection: { state: "live", latency: 14, attempt: 0 },
     skills: SEED_SKILLS.map((s) => ({ ...s })),
+    reload: { active: false, reason: null, startedAt: null },
   }));
+  // Cancel any in-flight safety timer left by a previous test before
+  // it advanced its fake clock — otherwise a delayed real-timer could
+  // race subsequent assertions.
+  useTetherStore.getState().clearReloading();
 };
 
 describe("useTetherStore", () => {
@@ -215,5 +220,88 @@ describe("useTetherStore", () => {
     useTetherStore.getState()._setSkills(fresh);
     expect(useTetherStore.getState().skills).toHaveLength(5);
     expect(useTetherStore.getState().skills.every((s) => !s.on)).toBe(true);
+  });
+
+  it("setReloading flips reload state and stamps reason + startedAt", () => {
+    reset();
+    vi.useFakeTimers();
+    useTetherStore.setState({
+      reload: { active: false, reason: null, startedAt: null },
+    });
+    const before = Date.now();
+    useTetherStore.getState().setReloading("session.state");
+    const r = useTetherStore.getState().reload;
+    expect(r.active).toBe(true);
+    expect(r.reason).toBe("session.state");
+    expect(r.startedAt).not.toBeNull();
+    expect(r.startedAt!).toBeGreaterThanOrEqual(before);
+  });
+
+  it("clearReloading reverts to inactive and is idempotent", () => {
+    reset();
+    vi.useFakeTimers();
+    useTetherStore.getState().setReloading("foo");
+    expect(useTetherStore.getState().reload.active).toBe(true);
+    useTetherStore.getState().clearReloading();
+    const r = useTetherStore.getState().reload;
+    expect(r.active).toBe(false);
+    expect(r.reason).toBeNull();
+    expect(r.startedAt).toBeNull();
+    // Calling again is a no-op (idempotent).
+    expect(() => useTetherStore.getState().clearReloading()).not.toThrow();
+  });
+
+  it("setReloading auto-clears after the 30s safety timeout", () => {
+    reset();
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useTetherStore.getState().setReloading("session.state");
+    expect(useTetherStore.getState().reload.active).toBe(true);
+
+    // Just under the bound — still active.
+    vi.advanceTimersByTime(29_999);
+    expect(useTetherStore.getState().reload.active).toBe(true);
+
+    // Cross the boundary — auto-clear + console.warn.
+    vi.advanceTimersByTime(2);
+    expect(useTetherStore.getState().reload.active).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/safety timeout fired/),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("setReloading called twice resets the safety-timeout deadline", () => {
+    reset();
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    useTetherStore.getState().setReloading("first");
+    vi.advanceTimersByTime(20_000); // 10s remaining on the first timer
+    useTetherStore.getState().setReloading("second"); // resets deadline
+    expect(useTetherStore.getState().reload.reason).toBe("second");
+
+    // Original 30s would have fired now (20s + 10s) — must NOT fire.
+    vi.advanceTimersByTime(15_000);
+    expect(useTetherStore.getState().reload.active).toBe(true);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // Past the second timer's 30s — now it fires.
+    vi.advanceTimersByTime(15_500);
+    expect(useTetherStore.getState().reload.active).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it("clearReloading cancels the safety-timeout timer", () => {
+    reset();
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useTetherStore.getState().setReloading("x");
+    useTetherStore.getState().clearReloading();
+    vi.advanceTimersByTime(60_000);
+    // Already cleared and timer canceled — no warn fired.
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(useTetherStore.getState().reload.active).toBe(false);
+    warnSpy.mockRestore();
   });
 });

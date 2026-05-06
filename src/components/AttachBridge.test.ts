@@ -10,6 +10,8 @@ import { useTetherStore } from "@/store";
 describe("AttachBridge.handleFrame", () => {
   beforeEach(() => {
     useTetherStore.getState().setAttachState("idle");
+    // Clear any leftover reload state + safety timer from a prior test.
+    useTetherStore.getState().clearReloading();
   });
 
   it("transitions to error on attach.lock-denied", () => {
@@ -28,7 +30,7 @@ describe("AttachBridge.handleFrame", () => {
     expect(useTetherStore.getState().attachState).toBe("idle");
   });
 
-  it("ignores LocalEnvelope frames (Phase 10 will route)", () => {
+  it("ignores LocalEnvelope frames for attach-state purposes (Phase 10 will route to chat)", () => {
     handleFrame({
       kind: "output.agent-event",
       sessionId: "x",
@@ -102,5 +104,72 @@ describe("AttachBridge.handleFrame", () => {
     handleFrame("string");
     handleFrame(42);
     expect(useTetherStore.getState().attachState).toBe("idle");
+  });
+
+  describe("reload signal", () => {
+    it("session.state with recordType=system flips reload.active to true", () => {
+      handleFrame({
+        kind: "session.state",
+        sessionId: "sid-A",
+        providerType: "claude-code",
+        plaintextMetadata: { recordType: "system", class: "STATE" },
+      });
+      const r = useTetherStore.getState().reload;
+      expect(r.active).toBe(true);
+      expect(r.reason).toBe("session.state");
+    });
+
+    it("a non-system session.state envelope does NOT trigger reload", () => {
+      handleFrame({
+        kind: "session.state",
+        sessionId: "sid-A",
+        providerType: "claude-code",
+        plaintextMetadata: { recordType: "permission-mode", class: "STATE" },
+      });
+      expect(useTetherStore.getState().reload.active).toBe(false);
+    });
+
+    it("a subsequent agent-event clears an active reload", () => {
+      // Arm reload.
+      handleFrame({
+        kind: "session.state",
+        sessionId: "sid-A",
+        providerType: "claude-code",
+        plaintextMetadata: { recordType: "system" },
+      });
+      expect(useTetherStore.getState().reload.active).toBe(true);
+
+      // Agent traffic resumes → reload clears.
+      handleFrame({
+        kind: "output.agent-event",
+        sessionId: "sid-A",
+        providerType: "claude-code",
+      });
+      expect(useTetherStore.getState().reload.active).toBe(false);
+    });
+
+    it("a subsequent hook-event also clears an active reload", () => {
+      handleFrame({
+        kind: "session.state",
+        sessionId: "sid-A",
+        providerType: "claude-code",
+        plaintextMetadata: { recordType: "system" },
+      });
+      expect(useTetherStore.getState().reload.active).toBe(true);
+
+      handleFrame({
+        kind: "output.hook-event",
+        sessionId: "sid-A",
+        providerType: "claude-code",
+      });
+      expect(useTetherStore.getState().reload.active).toBe(false);
+    });
+
+    it("malformed envelopes (missing plaintextMetadata) are tolerated", () => {
+      handleFrame({ kind: "session.state", sessionId: "x" });
+      expect(useTetherStore.getState().reload.active).toBe(false);
+      handleFrame({ kind: "session.state", sessionId: "x", plaintextMetadata: null });
+      expect(useTetherStore.getState().reload.active).toBe(false);
+    });
   });
 });
