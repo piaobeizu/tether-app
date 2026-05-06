@@ -1,0 +1,120 @@
+/* ============================================================
+   Shared atom classes — buttons, inputs, segmented controls,
+   switches, animated dots. Translated from the prototype's per-
+   block <style> blocks into one consolidated stylesheet. Imported
+   from main.tsx alongside tokens.css.
+   ============================================================ */
+
+/* -------- buttons -------- */
+
+.btn-ghost-sm {
+  font: 500 11.5px var(--font-mono);
+  color: var(--ink-secondary);
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.btn-ghost-sm:hover { background: var(--bg-tint); }
+
+.btn-primary-sm {
+  font: 500 12px var(--font-sans);
+  color: var(--bg-elevated);
+  padding: 6px 12px;
+  border: 0;
+  background: var(--ink-primary);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.btn-primary-sm:hover { background: var(--accent-deep); }
+
+/* -------- input -------- */
+
+.input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg-elevated);
+  font-size: 12.5px;
+  color: var(--ink-primary);
+  outline: none;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+/* -------- segmented control -------- */
+
+.seg {
+  font: 500 12px var(--font-mono);
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  color: var(--ink-secondary);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.seg.on {
+  background: var(--ink-primary);
+  color: var(--bg-app);
+  border-color: var(--ink-primary);
+}
+
+/* -------- toggle switch -------- */
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-track {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  background: var(--ink-quat);
+  border-radius: 999px;
+  transition: background 0.15s;
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  background: white;
+  border-radius: 999px;
+  transition: transform 0.15s;
+}
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track::after { transform: translateX(16px); }
+
+/* -------- pulse dot (DAG running indicator) -------- */
+
+.dot-anim {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  margin-right: 6px;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
