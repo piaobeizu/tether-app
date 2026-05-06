@@ -1,13 +1,35 @@
-// Left-column workspace tree. v0.1: in-memory expand state per session,
-// no persistence; the workspace list comes from the store.
+// Left-column workspace tree (Phase 8).
 //
-// Phase 8 will swap the manual tree for a virtualized library
-// (react-arborist or @tanstack/virtual) when N >= 50 ws becomes
-// realistic — see .claude/claude-design.md plan.
+// Flattens workspace+file tree into a Row[] then chooses non-virtual
+// rendering vs @tanstack/react-virtual based on row count. The
+// VIRTUAL_THRESHOLD is set low (>=30 rows) so the dependency starts
+// earning its weight as soon as the daemon registry returns >a few
+// workspaces.
+//
+// Expand state lives in two per-session dicts:
+//   - openWs        : keyed by workspace name (globally unique)
+//   - openFolders   : keyed by `<workspace>::<path>` (composite key
+//                     so two workspaces with `src/` don't collide)
 
-import { Fragment, useState } from "react";
-import { useTetherStore } from "@/store";
+import { Fragment, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Icon } from "@/blocks/Icon";
+import { useTetherStore } from "@/store";
+import type { Workspace } from "@/store/types";
+
+const VIRTUAL_THRESHOLD = 30;
+const ROW_HEIGHT_PX = 24;
+
+type Row =
+  | { kind: "ws"; ws: Workspace; open: boolean }
+  | {
+      kind: "file";
+      ws: Workspace;
+      path: string;
+      isFolder: boolean;
+      dirty: boolean;
+      open: boolean;
+    };
 
 interface TreeRowProps {
   name: string;
@@ -66,6 +88,9 @@ function TreeRow({
   );
 }
 
+const folderKey = (wsName: string, path: string): string =>
+  `${wsName}::${path}`;
+
 export function WorkspaceTree() {
   const activeWorkspace = useTetherStore((s) => s.activeWorkspace);
   const workspaces = useTetherStore((s) => s.workspaces);
@@ -75,61 +100,143 @@ export function WorkspaceTree() {
     "tether-app": true,
   });
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({
-    "src/": true,
-    "src/blocks/": true,
+    [folderKey("tether-app", "src/")]: true,
+    [folderKey("tether-app", "src/blocks/")]: true,
+  });
+
+  const rows = useMemo<Row[]>(() => {
+    const acc: Row[] = [];
+    for (const ws of Object.values(workspaces)) {
+      const wsOpen = openWs[ws.name] ?? false;
+      acc.push({ kind: "ws", ws, open: wsOpen });
+      if (!wsOpen) continue;
+      for (const path of ws.files) {
+        const isFolder = path.endsWith("/");
+        acc.push({
+          kind: "file",
+          ws,
+          path,
+          isFolder,
+          dirty: ws.dirty.includes(path),
+          open: openFolders[folderKey(ws.name, path)] ?? false,
+        });
+      }
+    }
+    return acc;
+  }, [workspaces, openWs, openFolders]);
+
+  const renderRow = (row: Row) => {
+    if (row.kind === "ws") {
+      return (
+        <div
+          className={
+            "tree-row " + (row.ws.name === activeWorkspace ? "active" : "")
+          }
+          onClick={() => {
+            setOpenWs((o) => ({ ...o, [row.ws.name]: !o[row.ws.name] }));
+            setActiveWorkspace(row.ws.name);
+          }}
+          style={{ paddingLeft: 8 }}
+        >
+          <Icon
+            name={row.open ? "chev-down" : "chevron"}
+            size={11}
+            style={{ color: "var(--ink-quat)", marginRight: 2 }}
+          />
+          <span className={"ws-dot " + row.ws.status} />
+          <span className="tree-label" style={{ fontWeight: 600 }}>
+            {row.ws.name}
+          </span>
+        </div>
+      );
+    }
+    return (
+      <TreeRow
+        name={row.path}
+        type={row.isFolder ? "folder" : "file"}
+        depth={1}
+        dirty={row.dirty}
+        // No `activeFile` in the store yet — Phase-9 will add one.
+        // For now, no row gets an active highlight; previously this
+        // was hardcoded to `src/blocks/dag.tsx` which was a visual lie.
+        active={false}
+        open={row.open}
+        onToggle={() =>
+          setOpenFolders((o) => {
+            const k = folderKey(row.ws.name, row.path);
+            return { ...o, [k]: !o[k] };
+          })
+        }
+      />
+    );
+  };
+
+  if (rows.length < VIRTUAL_THRESHOLD) {
+    return (
+      <>
+        {rows.map((row) => (
+          <Fragment key={rowKey(row)}>{renderRow(row)}</Fragment>
+        ))}
+      </>
+    );
+  }
+
+  return <VirtualizedTree rows={rows} renderRow={renderRow} />;
+}
+
+function VirtualizedTree({
+  rows,
+  renderRow,
+}: {
+  rows: Row[];
+  renderRow: (row: Row) => React.ReactNode;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT_PX,
+    overscan: 8,
   });
 
   return (
-    <>
-      {Object.values(workspaces).map((ws) => {
-        const open = openWs[ws.name];
-        return (
-          <Fragment key={ws.name}>
+    <div
+      ref={parentRef}
+      className="scroll-thin"
+      style={{ height: "100%", overflow: "auto" }}
+    >
+      <div
+        style={{
+          height: virtualizer.getTotalSize(),
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        {virtualizer.getVirtualItems().map((vRow) => {
+          const row = rows[vRow.index];
+          if (!row) return null;
+          return (
             <div
-              className={
-                "tree-row " + (ws.name === activeWorkspace ? "active" : "")
-              }
-              onClick={() => {
-                setOpenWs((o) => ({ ...o, [ws.name]: !o[ws.name] }));
-                setActiveWorkspace(ws.name);
+              key={rowKey(row)}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${vRow.start}px)`,
               }}
-              style={{ paddingLeft: 8 }}
             >
-              <Icon
-                name={open ? "chev-down" : "chevron"}
-                size={11}
-                style={{ color: "var(--ink-quat)", marginRight: 2 }}
-              />
-              <span className={"ws-dot " + ws.status} />
-              <span className="tree-label" style={{ fontWeight: 600 }}>
-                {ws.name}
-              </span>
+              {renderRow(row)}
             </div>
-            {open &&
-              ws.files.map((f) => {
-                const isFolder = f.endsWith("/");
-                const dirty = ws.dirty.includes(f);
-                return (
-                  <TreeRow
-                    key={f}
-                    name={f}
-                    type={isFolder ? "folder" : "file"}
-                    depth={1}
-                    dirty={dirty}
-                    active={
-                      f === "src/blocks/dag.tsx" &&
-                      ws.name === activeWorkspace
-                    }
-                    open={openFolders[f]}
-                    onToggle={() =>
-                      setOpenFolders((o) => ({ ...o, [f]: !o[f] }))
-                    }
-                  />
-                );
-              })}
-          </Fragment>
-        );
-      })}
-    </>
+          );
+        })}
+      </div>
+    </div>
   );
+}
+
+function rowKey(row: Row): string {
+  return row.kind === "ws"
+    ? `ws:${row.ws.name}`
+    : `f:${row.ws.name}:${row.path}`;
 }

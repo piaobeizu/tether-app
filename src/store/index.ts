@@ -24,6 +24,7 @@ import {
   initialWorkspaces,
 } from "./mock";
 import type {
+  AppRoute,
   ChatExpanded,
   ChatMessage,
   Connection,
@@ -36,9 +37,32 @@ import type {
   SettingsTab,
   Skill,
   SlashCommand,
+  Theme,
   Workspace,
   WtState,
 } from "./types";
+
+const THEME_STORAGE_KEY = "tether.theme";
+
+function readPersistedTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+  try {
+    const v = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (v === "light" || v === "dark") return v;
+  } catch {
+    // Storage may be disabled (private mode, Tauri WebView lock-down).
+  }
+  return "light";
+}
+
+function writePersistedTheme(theme: Theme): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // Best effort; toggling will still work in-memory.
+  }
+}
 
 // -------- shape --------
 
@@ -78,6 +102,14 @@ export interface State {
   pairCode: string;
   pairTtl: number;
   pairMobileStep: PairMobileStep;
+
+  // Top-level shell route (Phase 8). Drives <AppShell />; ignored
+  // by the design-canvas App where every surface is rendered.
+  route: AppRoute;
+
+  // Theme — persisted to localStorage; cascades through tokens via
+  // the `data-theme` attribute on the AppShell root.
+  theme: Theme;
 }
 
 export interface Actions {
@@ -115,6 +147,13 @@ export interface Actions {
   confirmPair: () => void;
   /** Internal — used by the TTL countdown ticker. */
   _tickPairTtl: () => void;
+
+  // Routing (Phase 8)
+  setRoute: (route: AppRoute) => void;
+
+  // Theme
+  setTheme: (theme: Theme) => void;
+  toggleTheme: () => void;
 }
 
 export type Slice = State & Actions;
@@ -192,6 +231,9 @@ function initialState(): State {
     pairCode: "4F2-9K7",
     pairTtl: 47,
     pairMobileStep: "scan",
+
+    route: "home",
+    theme: readPersistedTheme(),
   };
 }
 
@@ -298,6 +340,10 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
 
     _advanceDag: () => {
       const cur = get();
+      // Skip ticks when the current route doesn't render a DAG. Cuts
+      // the 1Hz re-render churn on settings / errors / pair routes
+      // for components subscribed to s.dag.
+      if (cur.route !== "home") return;
       if (cur.dag.paused) return;
       const ri = cur.dag.nodes.findIndex(
         (n: DagNode) => n.status === "running",
@@ -383,11 +429,30 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
     },
 
     _tickPairTtl: () => {
+      // Pair TTL only matters while the user is on the pair surface.
+      // On any other route the timer is wasted churn.
+      const cur = get();
+      if (cur.route !== "pair") return;
       set((s) =>
         s.pairTtl <= 0
           ? { pairTtl: PAIR_TTL_INITIAL, pairCode: regenCode() }
           : { pairTtl: s.pairTtl - 1 },
       );
+    },
+
+    setRoute: (route) => {
+      set({ route });
+    },
+
+    setTheme: (theme) => {
+      writePersistedTheme(theme);
+      set({ theme });
+    },
+
+    toggleTheme: () => {
+      const next: Theme = get().theme === "light" ? "dark" : "light";
+      writePersistedTheme(next);
+      set({ theme: next });
     },
   };
 }
