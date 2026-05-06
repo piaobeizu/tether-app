@@ -1,0 +1,153 @@
+/* ============================================================
+   tether — design tokens
+   Source: Claude Design handoff bundle 2026-05-06
+   (.workspace/memory/local/design-handoff-2026-05-06/project/tether App UI.html)
+   Light-first: Claude.ai cream + Zed precision; warm-clay accent.
+   Any changes here MUST keep token names stable across light + dark.
+   ============================================================ */
+
+:root {
+  /* ============ palette ============ */
+  --bg-app:        #F6F4EE;       /* canvas paper */
+  --bg-surface:    #FBF9F4;       /* card */
+  --bg-elevated:   #FFFFFF;       /* popover / modal */
+  --bg-sunken:     #EFEBE1;       /* tree / sidebar rail */
+  --bg-tint:       #E8E2D2;       /* hover, subtle */
+  --bg-code:       #F1ECDF;       /* inline code, mono */
+
+  --ink-primary:   #1B1A18;       /* near-black, warm */
+  --ink-secondary: #4A4742;
+  --ink-tertiary:  #837E73;
+  --ink-quat:      #B4AC9B;
+  --ink-disabled:  #CFC8B7;
+
+  --line-strong:   #2A2824;
+  --line:          #D9D2C0;
+  --line-soft:     #E5DFCE;
+  --line-hairline: #ECE7D8;
+
+  /* Accent: tether's "clay" — warm terracotta meets Claude orange */
+  --accent:        #C2410C;
+  --accent-hover:  #9A330A;
+  --accent-tint:   #FBE6D7;
+  --accent-deep:   #6B2407;
+
+  /* Semantic */
+  --success:       #2F7D5B;
+  --success-tint:  #DFEBE0;
+  --warn:          #B7791F;
+  --warn-tint:     #F6E9C8;
+  --danger:        #B42318;
+  --danger-tint:   #FBE2DD;
+  --info:          #2A5FB7;
+  --info-tint:     #DDE6F7;
+
+  /* ============ type ============ */
+  --font-sans:  "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:  "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+
+  /* ============ radii — sharper for IDE surfaces, softer for chat ============ */
+  --r-1:    3px;
+  --r-2:    5px;
+  --r-3:    8px;
+  --r-4:    12px;
+  --r-5:    16px;
+  --r-pill: 999px;
+
+  /* ============ shadow ============ */
+  --sh-1:   0 1px 0 rgba(27,26,24,.04), 0 1px 2px rgba(27,26,24,.04);
+  --sh-2:   0 1px 0 rgba(27,26,24,.04), 0 2px 6px rgba(27,26,24,.06);
+  --sh-3:   0 1px 0 rgba(27,26,24,.04), 0 8px 24px rgba(27,26,24,.08);
+  --sh-pop: 0 24px 60px -12px rgba(27,26,24,.18), 0 8px 18px -8px rgba(27,26,24,.12);
+}
+
+/* ============ dark variant ============ */
+[data-theme="dark"] {
+  --bg-app:        #1A1815;
+  --bg-surface:    #211E1A;
+  --bg-elevated:   #2A2620;
+  --bg-sunken:     #141210;
+  --bg-tint:       #322D26;
+  --bg-code:       #2A2620;
+
+  --ink-primary:   #F5F1E6;
+  --ink-secondary: #C7BEA9;
+  --ink-tertiary:  #8E8576;
+  --ink-quat:      #5C5448;
+  --ink-disabled:  #3F3A32;
+
+  --line-strong:   #C7BEA9;
+  --line:          #3F3A32;
+  --line-soft:     #322D26;
+  --line-hairline: #2A2620;
+
+  --accent:        #F0834F;
+  --accent-hover:  #E26B36;
+  --accent-tint:   #3A2418;
+  --accent-deep:   #FFB287;
+
+  --success-tint:  #1F2D24;
+  --warn-tint:     #2F2918;
+  --danger-tint:   #2F1F1C;
+  --info-tint:     #1B2436;
+}
+
+/* ============ root resets ============ */
+html, body {
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--ink-primary);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01","ss02","cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+
+/* ============ shared atoms ============ */
+.mono   { font-family: var(--font-mono); font-feature-settings: "ss02","ss03","calt"; }
+.serif  { font-family: var(--font-serif); }
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: var(--r-2);
+  background: var(--bg-elevated);
+  color: var(--ink-secondary);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
+  font-weight: 500;
+  border: 1px solid var(--line);
+  background: var(--bg-surface);
+  color: var(--ink-secondary);
+  white-space: nowrap;
+}
+.pill .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ink-quat);
+}
+.pill.live { background: var(--success-tint); border-color: #C9DDCF; color: #225B43; }
+.pill.live .dot { background: var(--success); box-shadow: 0 0 0 3px rgba(47,125,91,.15); }
+.pill.warn { background: var(--warn-tint); border-color: #E7D3A4; color: #7A5410; }
+.pill.warn .dot { background: var(--warn); }
+.pill.idle { background: var(--bg-tint); }
+
+.scroll-thin::-webkit-scrollbar       { width: 8px; height: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }
