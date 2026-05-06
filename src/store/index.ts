@@ -25,6 +25,7 @@ import {
 } from "./mock";
 import type {
   AppRoute,
+  AttachState,
   ChatExpanded,
   ChatMessage,
   Connection,
@@ -43,6 +44,7 @@ import type {
 } from "./types";
 
 const THEME_STORAGE_KEY = "tether.theme";
+const ATTACH_SID_STORAGE_KEY = "tether.attach.sessionId";
 
 function readPersistedTheme(): Theme {
   if (typeof window === "undefined") return "light";
@@ -61,6 +63,46 @@ function writePersistedTheme(theme: Theme): void {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   } catch {
     // Best effort; toggling will still work in-memory.
+  }
+}
+
+function readPersistedAttachSessionId(): string {
+  // Priority: localStorage (user-set) > VITE_TETHER_SESSION_ID build-
+  // time env (debug builds) > empty (UI shows the input field with no
+  // pre-fill). We deliberately do NOT default to a hard-coded sid
+  // because v0.1 has no way to pick one safely without a workspace
+  // listing UI.
+  if (typeof window !== "undefined") {
+    try {
+      const v = window.localStorage.getItem(ATTACH_SID_STORAGE_KEY);
+      if (v) return v;
+    } catch {
+      /* localStorage may be disabled */
+    }
+  }
+  // Vite exposes the env on `import.meta.env` after the `VITE_` prefix
+  // allowlist (see vite.config.ts envPrefix). This fallback lets the
+  // dev iteration loop auto-fill via a `.env.local`-style override.
+  // Cast through unknown to placate TS lib config that doesn't ship
+  // import.meta.env types.
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> })
+    .env;
+  if (env && typeof env.VITE_TETHER_SESSION_ID === "string") {
+    return env.VITE_TETHER_SESSION_ID;
+  }
+  return "";
+}
+
+function writePersistedAttachSessionId(sid: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (sid === "") {
+      window.localStorage.removeItem(ATTACH_SID_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(ATTACH_SID_STORAGE_KEY, sid);
+    }
+  } catch {
+    /* best effort */
   }
 }
 
@@ -110,6 +152,18 @@ export interface State {
   // Theme — persisted to localStorage; cascades through tokens via
   // the `data-theme` attribute on the AppShell root.
   theme: Theme;
+
+  // Local-daemon attach bridge (Phase 9). The sessionId is persisted
+  // to localStorage so reopening the app reattaches to the same cc
+  // session. State is set by the AttachBridge effect in AppShell.
+  attachSessionId: string;
+  attachState: AttachState;
+  /** Last error string surfaced from the attach bridge — used by the
+   *  Settings → connection panel; reset on a successful reconnect. */
+  attachError: string | null;
+  /** Monotonic counter — flipped by setAttachReconnectTrigger so the
+   *  AttachBridge effect can re-run without a full app remount. */
+  attachReconnectAttempt: number;
 }
 
 export interface Actions {
@@ -158,6 +212,11 @@ export interface Actions {
   // Theme
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
+
+  // Attach bridge (Phase 9)
+  setAttachSessionId: (sessionId: string) => void;
+  setAttachState: (state: AttachState, error?: string | null) => void;
+  triggerAttachReconnect: () => void;
 }
 
 export type Slice = State & Actions;
@@ -238,6 +297,11 @@ function initialState(): State {
 
     route: "home",
     theme: readPersistedTheme(),
+
+    attachSessionId: readPersistedAttachSessionId(),
+    attachState: "idle",
+    attachError: null,
+    attachReconnectAttempt: 0,
   };
 }
 
@@ -461,6 +525,23 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
       const next: Theme = get().theme === "light" ? "dark" : "light";
       writePersistedTheme(next);
       set({ theme: next });
+    },
+
+    setAttachSessionId: (sessionId) => {
+      writePersistedAttachSessionId(sessionId);
+      set({ attachSessionId: sessionId });
+    },
+
+    setAttachState: (state, error = null) => {
+      set({ attachState: state, attachError: error });
+    },
+
+    triggerAttachReconnect: () => {
+      set((s) => ({
+        attachReconnectAttempt: s.attachReconnectAttempt + 1,
+        attachState: "reconnecting",
+        attachError: null,
+      }));
     },
   };
 }

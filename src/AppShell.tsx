@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import { useTetherStore } from "@/store";
 import { startMockTimers } from "@/store/timers";
 import { useViewport } from "@/hooks/useViewport";
+import { AttachBridge } from "@/components/AttachBridge";
 import { Desktop } from "@/components/desktop/Desktop";
 import { MobileMain } from "@/components/mobile/MobileMain";
 import { PairDesktop } from "@/components/pair/PairDesktop";
@@ -39,6 +40,7 @@ export function AppShell() {
         display: "grid",
       }}
     >
+      <AttachBridge />
       <SurfaceWindow viewport={viewport}>
         {viewport === "desktop"
           ? renderDesktopRoute(route)

@@ -32,12 +32,15 @@ url = "2"
 bytes = "1"
 
 # --- Async runtime ---
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "time", "net", "process"] }
 
-# --- Plumbing for wt module ---
+# --- Plumbing for wt + attach modules ---
 dashmap = "6"           # concurrent map: SessionId/StreamId -> handle
 thiserror = "2"
 tracing = "0.1"
+# Attach socket bridge (Phase 9): cancellation token shared between the
+# Tauri command surface and the per-subscription read-loop task.
+tokio-util = { version = "0.7", default-features = false }
 
 # --- Plugins (added as deps but NOT fully wired — capability registration
 # is left for the next slice; see tauri.conf.json + capabilities/) ---
@@ -61,6 +64,12 @@ tauri-plugin-barcode-scanner = "2.4.4"
 default = []
 # Tauri 2 expects `custom-protocol` for production builds.
 custom-protocol = ["tauri/custom-protocol"]
+# Opt-in escape hatch for release builds while the Stronghold KDF is
+# still the non-cryptographic v0.1 placeholder. CI / smoke builds may
+# enable it; production artifacts MUST NOT (the lib.rs compile_error!
+# enforces this for default release builds). Delete this row at the
+# same time the placeholder is replaced with Argon2id.
+insecure-kdf = []
 
 [profile.release]
 panic = "abort"

@@ -22,6 +22,11 @@ export function Settings() {
   const setSettingsTab = useTetherStore((s) => s.setSettingsTab);
   const toggleSkill = useTetherStore((s) => s.toggleSkill);
   const reconnect = useTetherStore((s) => s.reconnect);
+  const attachSessionId = useTetherStore((s) => s.attachSessionId);
+  const attachState = useTetherStore((s) => s.attachState);
+  const attachError = useTetherStore((s) => s.attachError);
+  const setAttachSessionId = useTetherStore((s) => s.setAttachSessionId);
+  const triggerAttachReconnect = useTetherStore((s) => s.triggerAttachReconnect);
 
   const nav: NavEntry[] = [
     { key: "account", name: "account", sub: "wxk" },
@@ -149,6 +154,71 @@ export function Settings() {
               <Row k="latency" v={`${connection.latency ?? "–"}ms`} />
               <Row k="protocol" v="webtransport · h3 · QUIC v1" />
               <Row k="e2e" v="X25519 · ChaCha20-Poly1305" />
+
+              <div className="set-section-title" style={{ marginTop: 18 }}>
+                attach socket
+              </div>
+              <Row
+                k="state"
+                v={
+                  <span
+                    className={
+                      "pill " +
+                      (attachState === "connected"
+                        ? "live"
+                        : attachState === "idle"
+                          ? ""
+                          : "warn")
+                    }
+                  >
+                    <span className="dot" />
+                    {attachState}
+                  </span>
+                }
+                action={
+                  <button
+                    type="button"
+                    className="btn-ghost-sm"
+                    onClick={triggerAttachReconnect}
+                    disabled={!attachSessionId}
+                  >
+                    reconnect
+                  </button>
+                }
+              />
+              <Row
+                k="sessionId"
+                v={
+                  <input
+                    type="text"
+                    aria-label="attach session id"
+                    placeholder="cc session uuid"
+                    value={attachSessionId}
+                    onChange={(e) => setAttachSessionId(e.target.value.trim())}
+                    style={{
+                      width: "100%",
+                      maxWidth: 320,
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                      padding: "4px 8px",
+                      background: "var(--bg-input, transparent)",
+                      color: "var(--ink-primary)",
+                      border: "1px solid var(--ink-tertiary)",
+                      borderRadius: 4,
+                    }}
+                  />
+                }
+              />
+              {attachError && (
+                <Row
+                  k="error"
+                  v={
+                    <span style={{ color: "var(--accent)", fontSize: 11.5 }}>
+                      {attachError}
+                    </span>
+                  }
+                />
+              )}
             </>
           )}
 
