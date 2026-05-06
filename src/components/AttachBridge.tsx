@@ -187,6 +187,19 @@ export function AttachBridge() {
  * envelopes into the auth-prompt slice. Phase 10 will route the rest
  * of the LocalEnvelope kinds into chat / DAG.
  *
+ * Reload signal — see also `setReloading` in the store. We treat a
+ * `session.state` envelope whose `plaintextMetadata.recordType` is
+ * `"system"` as the proxy for "the cc subprocess just (re)started":
+ * after `Session.Recover` re-spawns cc, the next prompt drives a fresh
+ * `system` JSONL record into the watcher → mapper → attach socket
+ * pipeline. We use that as the closest approximation of "reload
+ * happening" until the daemon emits an explicit `session.reloading`
+ * envelope (tracked as a follow-up). Any subsequent envelope of a
+ * different kind (`output.agent-event` or `output.hook-event`) means
+ * agent work has resumed → clear the banner. The store also arms a
+ * 30s safety timeout so the UI never wedges if no clearing event
+ * arrives.
+ *
  * Exported for tests.
  */
 export function handleFrame(body: unknown): void {
@@ -220,6 +233,33 @@ export function handleFrame(body: unknown): void {
     });
     return;
   }
-  // Other LocalEnvelope kinds (output.agent-event / output.hook-event
-  // / session.state). Phase 10 dispatches these into chat / DAG.
+
+  // LocalEnvelope shape (kind / sessionId / plaintextMetadata / payload).
+  const kind = (body as { kind?: unknown }).kind;
+  if (typeof kind !== "string") return;
+
+  if (isReloadSignal(kind, body)) {
+    useTetherStore.getState().setReloading(kind);
+    return;
+  }
+  // Any other envelope kind (output.agent-event / output.hook-event /
+  // session.state without a system recordType) means traffic resumed —
+  // clear any in-flight reload banner. clearReloading is idempotent.
+  if (kind === "output.agent-event" || kind === "output.hook-event") {
+    useTetherStore.getState().clearReloading();
+  }
+  // (Intentionally no console.log on the hot path — production builds
+  // shouldn't spam the devtools console with envelope traffic.)
+}
+
+/** True when the envelope kind/payload pair indicates a session reload
+ *  is in progress. Today: `session.state` + `recordType === "system"`.
+ *  Encapsulated so a future explicit `session.reloading` envelope kind
+ *  is a one-line change here. */
+function isReloadSignal(kind: string, body: unknown): boolean {
+  if (kind !== "session.state") return false;
+  const meta = (body as { plaintextMetadata?: unknown }).plaintextMetadata;
+  if (!meta || typeof meta !== "object") return false;
+  const recordType = (meta as { recordType?: unknown }).recordType;
+  return recordType === "system";
 }

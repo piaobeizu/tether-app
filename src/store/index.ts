@@ -109,6 +109,20 @@ function writePersistedAttachSessionId(sid: string): void {
 
 // -------- shape --------
 
+export interface ReloadState {
+  /** True while a session reload is in progress. Drives the
+   *  "正在重载会话…" banner. Cleared automatically when the next
+   *  non-reload envelope arrives, or by a 30s safety timeout (see
+   *  setReloading). */
+  active: boolean;
+  /** Free-form reason surfaced to the UI, e.g. the envelope kind that
+   *  triggered the reload. Null when active is false. */
+  reason: string | null;
+  /** Wall-clock ms since epoch when reload started. Null when inactive.
+   *  Useful for the safety-timeout countdown and dev diagnostics. */
+  startedAt: number | null;
+}
+
 export interface State {
   // Workspaces
   activeWorkspace: string;
@@ -136,6 +150,12 @@ export interface State {
 
   // Ambient
   errorBannerVisible: boolean;
+
+  /** Session-reload UX feedback (v0.1 backlog item). Surfaces the
+   *  "正在重载会话…" banner above AppShell while the daemon's session
+   *  subsystem is recovering cc (Session.Recover firing after a cc
+   *  exit). See AttachBridge.handleFrame for the wire-side trigger. */
+  reload: ReloadState;
 
   // Settings
   settingsTab: SettingsTab;
@@ -229,6 +249,17 @@ export interface Actions {
   // Tool authorization (Phase 9.1)
   pushAuthRequest: (req: PendingAuthRequest) => void;
   clearAuthRequest: () => void;
+
+  /** Mark the session as reloading. `reason` is surfaced verbatim to the
+   *  banner — typically the envelope kind that triggered it. Arms a 30s
+   *  safety timeout: if no clearReloading() arrives in that window, we
+   *  auto-clear and console-warn so the UI never wedges if the daemon
+   *  forgets to close the cycle. Calling setReloading again resets the
+   *  timer; calling clearReloading cancels it. */
+  setReloading: (reason: string) => void;
+  /** Clear an in-progress reload. Idempotent — safe to call when
+   *  reload.active is already false. Cancels the safety timeout. */
+  clearReloading: () => void;
 }
 
 export type Slice = State & Actions;
@@ -317,7 +348,29 @@ function initialState(): State {
 
     pendingAuthRequest: null,
     authRequestQueue: [],
+
+    reload: { active: false, reason: null, startedAt: null },
   };
+}
+
+/** Safety timeout in ms — if reload state stays active past this, the
+ *  UI auto-clears and logs a warning. 30s is a deliberately generous
+ *  bound: cc cold-start typically takes <10s, but plugin reload + auth
+ *  re-warmup can stretch on slow disks. Any reload exceeding this is a
+ *  bug in the daemon or the JSONL pump, not a user-visible "this is
+ *  normal" delay — better to surface stuck-state than freeze the UI. */
+export const RELOAD_SAFETY_TIMEOUT_MS = 30_000;
+
+/** Module-scoped timer handle so setReloading() / clearReloading() can
+ *  cancel each other and so multiple setReloading() calls just refresh
+ *  the deadline rather than stack a queue of timers. */
+let reloadSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearReloadSafetyTimer(): void {
+  if (reloadSafetyTimer !== null) {
+    clearTimeout(reloadSafetyTimer);
+    reloadSafetyTimer = null;
+  }
 }
 
 // -------- actions factory --------
@@ -583,6 +636,40 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
           authRequestQueue: rest,
         };
       });
+    },
+
+    setReloading: (reason) => {
+      // Reset any prior safety timer so the deadline is always
+      // measured from the most recent setReloading() call.
+      clearReloadSafetyTimer();
+      set({
+        reload: {
+          active: true,
+          reason,
+          startedAt: Date.now(),
+        },
+      });
+      reloadSafetyTimer = setTimeout(() => {
+        reloadSafetyTimer = null;
+        const cur = get();
+        if (!cur.reload.active) return; // already cleared by a frame
+        // Surface the stuck-state to devs without locking the UI —
+        // the banner disappears and normal traffic resumes.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[reload] safety timeout fired after ${RELOAD_SAFETY_TIMEOUT_MS}ms — auto-clearing (reason was "${cur.reload.reason ?? ""}")`,
+        );
+        set({
+          reload: { active: false, reason: null, startedAt: null },
+        });
+      }, RELOAD_SAFETY_TIMEOUT_MS);
+    },
+
+    clearReloading: () => {
+      clearReloadSafetyTimer();
+      const cur = get();
+      if (!cur.reload.active) return;
+      set({ reload: { active: false, reason: null, startedAt: null } });
     },
   };
 }

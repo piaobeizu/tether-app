@@ -13,6 +13,7 @@ import { useTetherStore } from "@/store";
 import { startMockTimers } from "@/store/timers";
 import { useViewport } from "@/hooks/useViewport";
 import { AttachBridge } from "@/components/AttachBridge";
+import { ReloadBanner } from "@/components/ReloadBanner";
 import { Desktop } from "@/components/desktop/Desktop";
 import { MobileMain } from "@/components/mobile/MobileMain";
 import { PairDesktop } from "@/components/pair/PairDesktop";
@@ -41,6 +42,12 @@ export function AppShell() {
       }}
     >
       <AttachBridge />
+      {/* Reload banner sits ABOVE the surface window on both viewports
+       *  so it's visible regardless of which route is active. Mobile
+       *  intentionally gets the same top-banner treatment (not a
+       *  bottom-toast) — toasts collide with the composer / IME and
+       *  hide behind the on-screen keyboard. */}
+      <ReloadBanner />
       <SurfaceWindow viewport={viewport}>
         {viewport === "desktop"
           ? renderDesktopRoute(route)
