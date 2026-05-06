@@ -1,0 +1,93 @@
+// Shape of the in-process tether app store. Mirrors the prototype's
+// store.jsx (Claude Design bundle 2026-05-06) with TypeScript types.
+//
+// Phases 3+ replace mock data with real wiring (daemon socket / WT
+// envelope stream / fence-tag-suffix grep results). The shape and
+// action surface stay stable so consuming components never see the
+// transition.
+
+export type ConnectionState = "live" | "reconnecting" | "dropped";
+export type WtState = "live" | "reconnecting";
+
+export interface Connection {
+  state: ConnectionState;
+  /** ms; null while reconnecting or dropped */
+  latency: number | null;
+  /** monotonic counter — incremented on each reconnect attempt */
+  attempt: number;
+}
+
+export type WorkspaceStatus = "live" | "idle";
+
+export interface Workspace {
+  name: string;
+  status: WorkspaceStatus;
+  /** Count of skills enabled in this workspace's tether.toml. */
+  skills: number;
+  /** Top-level paths surfaced in the workspace tree (mock for v0.1). */
+  files: readonly string[];
+  /** Files with unstaged edits — drives the dirty-dot in the tree. */
+  dirty: readonly string[];
+}
+
+export type MobileRoute = "main" | "skill" | "pair";
+
+export type DagNodeStatus = "queued" | "running" | "done" | "error";
+
+export interface DagNode {
+  id: string;
+  label: string;
+  status: DagNodeStatus;
+  /** Elapsed ms once status transitions to done. null while queued/running. */
+  ms: number | null;
+}
+
+export interface DagState {
+  nodes: DagNode[];
+  paused: boolean;
+  elapsedMs: number;
+}
+
+export type ChatRole = "user" | "ai";
+export type FencedBlockKind = "dag" | "form" | "candidates" | "media";
+
+export interface ChatMessage {
+  id: string;
+  from: ChatRole;
+  /** "HH:MM" 24-hour. Mock data uses fixed values; live stream uses the
+   *  envelope's `ts` field formatted client-side. */
+  t: string;
+  text: string;
+  /** When set, the renderer attaches the corresponding fenced block
+   *  inline (compact layout). */
+  block?: FencedBlockKind;
+}
+
+export interface FormValues {
+  name: string;
+  scope: string;
+  strategy: string;
+  dryRun: boolean;
+}
+
+export type ChatExpanded = Record<FencedBlockKind, boolean>;
+
+export type SettingsTab = "account" | "skills" | "connection" | "about";
+
+export interface Skill {
+  name: string;
+  v: string;
+  on: boolean;
+  /** When set, tells the user "→ <new version>" is available. */
+  update?: string;
+  desc: string;
+}
+
+export type PairMobileStep = "scan" | "confirm" | "success";
+
+/** Slash-menu commands surfaced in the desktop composer when text starts with "/".
+ *  Phase 4 wires real handlers; Phase 2 just renders the menu items. */
+export interface SlashCommand {
+  cmd: string;
+  desc: string;
+}
