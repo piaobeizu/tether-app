@@ -1,0 +1,30 @@
+{
+  "name": "tether-app",
+  "private": true,
+  "version": "0.1.0-dev",
+  "type": "module",
+  "description": "tether — multi-target Tauri 2 app (Android + macOS/Linux/Windows). Self-written WebTransport command wraps web-transport-quinn.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:android:init": "tauri android init",
+    "tauri:android:dev": "tauri android dev",
+    "tauri:android:build": "tauri android build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.0",
+    "@tauri-apps/plugin-fs": "2.5.1",
+    "@tauri-apps/plugin-deep-link": "2.4.9",
+    "@tauri-apps/plugin-barcode-scanner": "2.4.4",
+    "@tauri-apps/plugin-stronghold": "2.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.0",
+    "typescript": "5.6.3",
+    "vite": "5.4.10"
+  }
+}

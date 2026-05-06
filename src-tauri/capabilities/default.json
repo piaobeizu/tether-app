@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for tether-app — core + minimal plugin surface. App-defined `wt_*` commands are granted automatically because they're declared in the app crate's invoke_handler (no plugin permission rows needed).",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "fs:default",
+    "deep-link:default",
+    "barcode-scanner:default",
+    "stronghold:default"
+  ]
+}
