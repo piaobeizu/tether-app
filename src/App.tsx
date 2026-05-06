@@ -1,36 +1,37 @@
-// Phase-2 smoke screen. The Phase-1 token swatches stay; on top of them
-// we now wire the store + timers so the runtime exercise covers:
-//   - useTetherStore() hook subscription
-//   - state read (activeWorkspace, DAG progress, pair TTL countdown)
-//   - action dispatch (rollbackDag, pauseDag, regeneratePairCode, theme toggle)
-//   - startMockTimers() side-effect lifecycle
+// Phase-3 smoke screen — fenced-block gallery.
 //
-// Phases 3-7 replace this with the real surfaces (workspace tree, fenced
-// blocks, chat, pair flow, settings, errors). The store import contract
-// stays stable across that transition.
+// Renders all 4 block kinds in compact + full layout via the
+// <FencedBlock /> dispatcher, on top of the live store + timers from
+// Phase 2. This is the closest-to-real preview surface until Phase 4
+// lands the desktop three-column layout that hosts these for real.
+//
+// What this verifies at build/runtime:
+//   - <FencedBlock /> dispatcher routes every kind/layout pair
+//   - Each block subscribes to its store slice and updates with the
+//     auto-tick (DAG progress / pair TTL / candidate selection / form)
+//   - Theme toggle still works (data-theme="dark" cascades through
+//     all block CSS-var consumers)
+//
+// Replaced wholesale in Phase 4-7 by real surfaces.
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
+import { FencedBlock } from "@/blocks";
 import { useTetherStore } from "@/store";
 import { startMockTimers } from "@/store/timers";
+import type { FencedBlockKind } from "@/store/types";
+
+const BLOCK_KINDS: readonly FencedBlockKind[] = [
+  "dag",
+  "form",
+  "candidates",
+  "media",
+] as const;
 
 export function App() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
-
-  // Subscribe to fields actually displayed below — zustand re-renders
-  // only when the selected slice changes.
   const activeWorkspace = useTetherStore((s) => s.activeWorkspace);
-  const dagNodes = useTetherStore((s) => s.dag.nodes);
-  const dagPaused = useTetherStore((s) => s.dag.paused);
-  const elapsedMs = useTetherStore((s) => s.dag.elapsedMs);
-  const pairCode = useTetherStore((s) => s.pairCode);
-  const pairTtl = useTetherStore((s) => s.pairTtl);
-  const rollbackDag = useTetherStore((s) => s.rollbackDag);
-  const pauseDag = useTetherStore((s) => s.pauseDag);
-  const regeneratePairCode = useTetherStore((s) => s.regeneratePairCode);
 
   useEffect(() => startMockTimers(), []);
-
-  const dagDone = dagNodes.filter((n) => n.status === "done").length;
 
   return (
     <div
@@ -40,135 +41,101 @@ export function App() {
         background: "var(--bg-app)",
         color: "var(--ink-primary)",
         fontFamily: "var(--font-sans)",
-        padding: "48px 32px",
+        padding: "32px",
         display: "flex",
         flexDirection: "column",
         gap: 24,
       }}
     >
-      <header style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
+      <header
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 16,
+          flexWrap: "wrap",
+        }}
+      >
         <h1
           style={{
             margin: 0,
             fontFamily: "var(--font-serif)",
             fontWeight: 400,
-            fontSize: 48,
+            fontSize: 40,
             letterSpacing: "-0.02em",
           }}
         >
           tether
         </h1>
         <span style={{ color: "var(--ink-tertiary)", fontSize: 14 }}>
-          Phase&nbsp;2 — store + timers
+          Phase&nbsp;3 — fenced-block gallery
+        </span>
+        <span
+          className="mono"
+          style={{ color: "var(--ink-tertiary)", fontSize: 12 }}
+        >
+          ws: {activeWorkspace}
         </span>
         <button
           type="button"
           onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-          style={btn()}
+          className="btn-ghost-sm"
+          style={{ marginLeft: "auto" }}
         >
           theme: {theme}
         </button>
       </header>
 
       <p style={{ color: "var(--ink-secondary)", maxWidth: 720, margin: 0 }}>
-        Smoke screen — proves the store wiring. Phase 3+ replace this with the
-        real surfaces (fenced blocks → desktop layout → mobile → pair → settings).
+        Each block on the left is the <strong>compact</strong> layout (chat
+        inline). Each block on the right is the <strong>full</strong> layout
+        (artifact pane). All eight subscribe to the live store — DAG advances
+        on its own; click candidates / type in form / toggle theme to verify
+        propagation.
       </p>
 
-      <section style={card()}>
-        <h2 style={cardTitle()}>store: workspace</h2>
-        <p style={{ margin: 0, fontFamily: "var(--font-mono)", fontSize: 14 }}>
-          activeWorkspace = <strong>{activeWorkspace}</strong>
-        </p>
-      </section>
-
-      <section style={card()}>
-        <h2 style={cardTitle()}>store: DAG (auto-advances every ~7s while running)</h2>
-        <p style={{ margin: "0 0 12px 0", fontFamily: "var(--font-mono)", fontSize: 14 }}>
-          {dagDone} / {dagNodes.length} done · elapsed{" "}
-          {(elapsedMs / 1000).toFixed(0)}s · paused: {String(dagPaused)}
-        </p>
-        <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
-          {dagNodes.map((n) => (
-            <li
-              key={n.id}
-              style={{
-                display: "flex",
-                gap: 12,
-                fontFamily: "var(--font-mono)",
-                fontSize: 13,
-                color: n.status === "done" ? "var(--ink-tertiary)" : "var(--ink-primary)",
-              }}
-            >
-              <span style={{ width: 80, color: nodeStatusColor(n.status) }}>{n.status}</span>
-              <span>{n.label}</span>
-              {n.ms !== null && <span style={{ color: "var(--ink-tertiary)" }}>{n.ms}ms</span>}
-            </li>
-          ))}
-        </ul>
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button type="button" onClick={pauseDag} style={btn()}>
-            {dagPaused ? "▶ resume" : "❚❚ pause"}
-          </button>
-          <button type="button" onClick={rollbackDag} style={btn()}>
-            ↺ rollback
-          </button>
-        </div>
-      </section>
-
-      <section style={card()}>
-        <h2 style={cardTitle()}>store: pair (TTL counts down every 1s)</h2>
-        <p style={{ margin: "0 0 12px 0", fontFamily: "var(--font-mono)", fontSize: 14 }}>
-          code = <strong>{pairCode}</strong> · ttl = {pairTtl}s
-        </p>
-        <button type="button" onClick={regeneratePairCode} style={btn()}>
-          ↺ regenerate
-        </button>
+      <section
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(240px, 360px) 1fr",
+          gap: 24,
+          alignItems: "start",
+        }}
+      >
+        {BLOCK_KINDS.map((kind) => (
+          <BlockRow key={kind} kind={kind} />
+        ))}
       </section>
     </div>
   );
 }
 
-function nodeStatusColor(status: string): string {
-  if (status === "done") return "var(--success)";
-  if (status === "running") return "var(--accent)";
-  if (status === "error") return "var(--danger)";
-  return "var(--ink-quat)";
+function BlockRow({ kind }: { kind: FencedBlockKind }) {
+  return (
+    <>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <Label>compact · {kind}</Label>
+        <FencedBlock kind={kind} layout="compact" />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <Label>full · {kind}</Label>
+        <FencedBlock kind={kind} layout="full" />
+      </div>
+    </>
+  );
 }
 
-function btn(): CSSProperties {
-  return {
-    border: "1px solid var(--line)",
-    background: "var(--bg-surface)",
-    color: "var(--ink-primary)",
-    fontFamily: "var(--font-mono)",
-    fontSize: 12,
-    padding: "6px 10px",
-    borderRadius: "var(--r-2)",
-    cursor: "pointer",
-  };
-}
-
-function card(): CSSProperties {
-  return {
-    background: "var(--bg-surface)",
-    border: "1px solid var(--line-soft)",
-    borderRadius: "var(--r-3)",
-    padding: 16,
-    boxShadow: "var(--sh-1)",
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  };
-}
-
-function cardTitle(): CSSProperties {
-  return {
-    margin: 0,
-    fontSize: 13,
-    fontWeight: 500,
-    color: "var(--ink-tertiary)",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  };
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="mono"
+      style={{
+        fontSize: 10.5,
+        color: "var(--ink-tertiary)",
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+      }}
+    >
+      {children}
+    </span>
+  );
 }
