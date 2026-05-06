@@ -37,6 +37,65 @@ describe("AttachBridge.handleFrame", () => {
     expect(useTetherStore.getState().attachState).toBe("idle");
   });
 
+  it("dispatches auth.tool-request envelopes into the auth-prompt slice", () => {
+    useTetherStore.setState({
+      pendingAuthRequest: null,
+      authRequestQueue: [],
+    });
+    handleFrame({
+      kind: "auth.tool-request",
+      sessionId: "sid-1",
+      plaintextMetadata: {
+        requestId: "auth-xyz",
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+        summary: "Bash: ls",
+      },
+    });
+    const s = useTetherStore.getState();
+    expect(s.pendingAuthRequest).not.toBeNull();
+    expect(s.pendingAuthRequest?.requestId).toBe("auth-xyz");
+    expect(s.pendingAuthRequest?.toolName).toBe("Bash");
+    expect(s.pendingAuthRequest?.summary).toBe("Bash: ls");
+  });
+
+  it("queues a second auth.tool-request behind the in-flight one", () => {
+    useTetherStore.setState({
+      pendingAuthRequest: null,
+      authRequestQueue: [],
+    });
+    const make = (rid: string) => ({
+      kind: "auth.tool-request",
+      sessionId: "sid-1",
+      plaintextMetadata: {
+        requestId: rid,
+        toolName: "Bash",
+        toolInput: {},
+        summary: rid,
+      },
+    });
+    handleFrame(make("a"));
+    handleFrame(make("b"));
+    const s = useTetherStore.getState();
+    expect(s.pendingAuthRequest?.requestId).toBe("a");
+    expect(s.authRequestQueue).toHaveLength(1);
+    expect(s.authRequestQueue[0]?.requestId).toBe("b");
+  });
+
+  it("ignores malformed auth.tool-request envelopes", () => {
+    useTetherStore.setState({
+      pendingAuthRequest: null,
+      authRequestQueue: [],
+    });
+    // Missing required metadata fields.
+    handleFrame({
+      kind: "auth.tool-request",
+      sessionId: "sid-1",
+      plaintextMetadata: { requestId: "x" }, // missing toolName, summary
+    });
+    expect(useTetherStore.getState().pendingAuthRequest).toBeNull();
+  });
+
   it("is null-safe", () => {
     handleFrame(null);
     handleFrame(undefined);

@@ -16,9 +16,11 @@
 //
 // This component renders nothing — it is mount-only effect glue.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTetherStore } from "@/store";
 import { subscribe, type AttachSubscription } from "@/transport/attach";
+import { isAuthToolRequest } from "@/transport/auth";
+import { AuthPrompt } from "@/components/AuthPrompt";
 
 const RECONNECT_BACKOFF_MS = 2000;
 const MAX_RECONNECTS = 5;
@@ -71,6 +73,10 @@ export function AttachBridge() {
   // Generation counter — bumped on every effect run so a late frame
   // event from a previous run can be discarded.
   const genRef = useRef(0);
+  // Mirror of subRef into render state so <AuthPrompt /> can react when
+  // the subscription comes online / drops. Updated via setLiveSub in the
+  // effect alongside subRef.
+  const [liveSub, setLiveSub] = useState<AttachSubscription | null>(null);
 
   useEffect(() => {
     if (!sessionId) {
@@ -90,7 +96,11 @@ export function AttachBridge() {
       try {
         const sub = await subscribe({
           sessionId,
-          mode: "ro",
+          // rw mode is required so auth.tool-decision frames can be
+          // routed back via sendInput. The Rust bridge auto-downgrades
+          // if the daemon refused; that's reflected in the ack message
+          // handled in the state callback.
+          mode: "rw",
           client: { kind: "terminal", deviceId: deviceId() },
           onFrame: (frame) => {
             if (cancelled || myGen !== genRef.current) return;
@@ -118,6 +128,7 @@ export function AttachBridge() {
           return;
         }
         subRef.current = sub;
+        setLiveSub(sub);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setAttachState("error", `subscribe failed: ${msg}`);
@@ -143,6 +154,7 @@ export function AttachBridge() {
         if (subRef.current) {
           const old = subRef.current;
           subRef.current = null;
+          setLiveSub(null);
           void old.dispose();
         }
         void tryConnect();
@@ -159,19 +171,21 @@ export function AttachBridge() {
       }
       const sub = subRef.current;
       subRef.current = null;
+      setLiveSub(null);
       if (sub) void sub.dispose();
     };
     // sessionId / reconnectTrigger are the only inputs that should
     // restart the bridge. setAttachState is stable (zustand action).
   }, [sessionId, reconnectTrigger, setAttachState]);
 
-  return null;
+  return <AuthPrompt subscription={liveSub} />;
 }
 
 /**
- * Handle a single attach frame body. v0.1: just classifies the frame
- * type for the connection-state machine. Phase 10 will route envelopes
- * into the chat / DAG slices.
+ * Handle a single attach frame body. v0.1: classifies the frame type
+ * for the connection-state machine + dispatches auth.tool-request
+ * envelopes into the auth-prompt slice. Phase 10 will route the rest
+ * of the LocalEnvelope kinds into chat / DAG.
  *
  * Exported for tests.
  */
@@ -192,9 +206,20 @@ export function handleFrame(body: unknown): void {
     // Already handled via the state callback's "connected" transition.
     return;
   }
-  // LocalEnvelope shape (kind / sessionId / payload). Phase 10 will
-  // dispatch into the chat slice; for now we just log to keep the
-  // bridge clean.
-  // (Intentionally no console.log — production builds shouldn't spam
-  // the devtools console with envelope traffic.)
+  // Auth tool authorization request — push into the prompt queue. The
+  // <AuthPrompt /> component reads pendingAuthRequest from the store
+  // and renders the modal.
+  if (isAuthToolRequest(body)) {
+    const meta = body.plaintextMetadata;
+    useTetherStore.getState().pushAuthRequest({
+      requestId: meta.requestId,
+      toolName: meta.toolName,
+      toolInput: meta.toolInput,
+      summary: meta.summary,
+      sessionId: body.sessionId,
+    });
+    return;
+  }
+  // Other LocalEnvelope kinds (output.agent-event / output.hook-event
+  // / session.state). Phase 10 dispatches these into chat / DAG.
 }

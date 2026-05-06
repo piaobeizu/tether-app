@@ -35,6 +35,7 @@ import type {
   FormValues,
   MobileRoute,
   PairMobileStep,
+  PendingAuthRequest,
   SettingsTab,
   Skill,
   SlashCommand,
@@ -164,6 +165,13 @@ export interface State {
   /** Monotonic counter — flipped by setAttachReconnectTrigger so the
    *  AttachBridge effect can re-run without a full app remount. */
   attachReconnectAttempt: number;
+
+  // Tool authorization (Phase 9.1). Single in-flight request at a
+  // time — cc serializes PreToolUse hooks per call site, but if
+  // multiple show up the second one queues and we surface them in
+  // arrival order. v0.1 keeps the queue in-memory only.
+  pendingAuthRequest: PendingAuthRequest | null;
+  authRequestQueue: PendingAuthRequest[];
 }
 
 export interface Actions {
@@ -217,6 +225,10 @@ export interface Actions {
   setAttachSessionId: (sessionId: string) => void;
   setAttachState: (state: AttachState, error?: string | null) => void;
   triggerAttachReconnect: () => void;
+
+  // Tool authorization (Phase 9.1)
+  pushAuthRequest: (req: PendingAuthRequest) => void;
+  clearAuthRequest: () => void;
 }
 
 export type Slice = State & Actions;
@@ -302,6 +314,9 @@ function initialState(): State {
     attachState: "idle",
     attachError: null,
     attachReconnectAttempt: 0,
+
+    pendingAuthRequest: null,
+    authRequestQueue: [],
   };
 }
 
@@ -542,6 +557,32 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
         attachState: "reconnecting",
         attachError: null,
       }));
+    },
+
+    pushAuthRequest: (req) => {
+      set((s) => {
+        // Drop duplicates by requestId — daemon won't re-emit but a
+        // late frame replay (reconnect) could.
+        const inFlight = s.pendingAuthRequest?.requestId === req.requestId;
+        const queued = s.authRequestQueue.some(
+          (r) => r.requestId === req.requestId,
+        );
+        if (inFlight || queued) return s;
+        if (!s.pendingAuthRequest) {
+          return { pendingAuthRequest: req };
+        }
+        return { authRequestQueue: [...s.authRequestQueue, req] };
+      });
+    },
+
+    clearAuthRequest: () => {
+      set((s) => {
+        const [head, ...rest] = s.authRequestQueue;
+        return {
+          pendingAuthRequest: head ?? null,
+          authRequestQueue: rest,
+        };
+      });
     },
   };
 }
