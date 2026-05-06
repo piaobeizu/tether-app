@@ -4,12 +4,17 @@
 // matter.
 
 import { describe, expect, it, vi } from "vitest";
+import { loadSkills } from "./loadSkills";
 import { useTetherStore } from "./index";
+
+const SEED_SKILLS = await loadSkills();
 
 const reset = () => {
   // useTetherStore.setState supports a partial; the factory composition
   // gives us back fresh data when called like this. The actions stay
   // bound (zustand keeps function refs unless we replace explicitly).
+  // Skills are seeded synchronously via _setSkills so tests don't race
+  // the loader.
   useTetherStore.setState((s) => ({
     ...s,
     composerText: "",
@@ -23,6 +28,7 @@ const reset = () => {
     errorBannerVisible: true,
     wtState: "live",
     connection: { state: "live", latency: 14, attempt: 0 },
+    skills: SEED_SKILLS.map((s) => ({ ...s })),
   }));
 };
 
@@ -186,5 +192,28 @@ describe("useTetherStore", () => {
     expect(useTetherStore.getState().route).toBe("settings");
     useTetherStore.getState().setRoute("pair");
     expect(useTetherStore.getState().route).toBe("pair");
+  });
+
+  it("loadSkills() returns the v0.1 mock list", async () => {
+    const skills = await loadSkills();
+    expect(skills).toHaveLength(5);
+    const names = skills.map((s) => s.name);
+    expect(names).toEqual([
+      "refactor.code",
+      "spec.write",
+      "triage.issues",
+      "diff.review",
+      "research.synth",
+    ]);
+  });
+
+  it("_setSkills replaces the skills array deterministically", () => {
+    reset();
+    useTetherStore.getState()._setSkills([]);
+    expect(useTetherStore.getState().skills).toEqual([]);
+    const fresh = SEED_SKILLS.map((s) => ({ ...s, on: false }));
+    useTetherStore.getState()._setSkills(fresh);
+    expect(useTetherStore.getState().skills).toHaveLength(5);
+    expect(useTetherStore.getState().skills.every((s) => !s.on)).toBe(true);
   });
 });
