@@ -1,20 +1,19 @@
-// Phase-6 — full canvas: desktop + mobile-main side-by-side, with
-// pair flow (desktop initiator + mobile companion) below.
+// Phase-7 — full canvas: desktop + mobile-main + pair (desktop +
+// mobile companion) + settings + error states. The eight surfaces
+// from §11.Y / §11.J / D-19 are now all on screen.
 //
-// Both halves of §11.Y share the Phase-2 zustand store; the pair
-// flow rides on the same store (pairCode / pairTtl auto-tick from
-// store/timers; pairMobileStep state machine). Tap the mobile
-// scan-frame to advance scan → confirm → success; the success state
-// auto-resets after 3s.
-//
-// Phase 7 brings settings + errors. Phase 8 adds animation polish +
-// tree virtualization + tests.
+// What this canvas is for: design review, regression, hand-off — NOT
+// the production app shell. Phase 8 will switch the real app entry
+// to a routable layout (single surface at a time per viewport)
+// instead of the design-canvas grid.
 
 import { useEffect, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
+import { ErrorStates } from "@/components/errors/ErrorStates";
 import { MobileMain } from "@/components/mobile/MobileMain";
 import { PairDesktop } from "@/components/pair/PairDesktop";
 import { PairMobile } from "@/components/pair/PairMobile";
+import { Settings } from "@/components/settings/Settings";
 import { startMockTimers } from "@/store/timers";
 
 export function App() {
@@ -45,7 +44,7 @@ export function App() {
             letterSpacing: "0.04em",
           }}
         >
-          Phase&nbsp;6 — desktop + mobile + pair flow (§11.Y / §11.J)
+          Phase&nbsp;7 — desktop + mobile + pair + settings + errors
         </span>
         <button
           type="button"
@@ -57,39 +56,56 @@ export function App() {
         </button>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          gap: 32,
-          alignItems: "flex-start",
-          maxWidth: 1800,
-          width: "100%",
-          margin: "0 auto",
-        }}
-      >
-        <div style={{ minHeight: 720, display: "grid" }}>
+      <CanvasRow>
+        <CanvasCell minHeight={720}>
           <Desktop />
-        </div>
+        </CanvasCell>
         <MobileMain />
-      </div>
+      </CanvasRow>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          gap: 32,
-          alignItems: "flex-start",
-          maxWidth: 1800,
-          width: "100%",
-          margin: "32px auto 0",
-        }}
-      >
-        <div style={{ minHeight: 540, display: "grid" }}>
+      <CanvasRow>
+        <CanvasCell minHeight={540}>
           <PairDesktop />
-        </div>
+        </CanvasCell>
         <PairMobile />
-      </div>
+      </CanvasRow>
+
+      <CanvasRow>
+        <CanvasCell minHeight={520}>
+          <Settings />
+        </CanvasCell>
+        <CanvasCell minHeight={520}>
+          <ErrorStates />
+        </CanvasCell>
+      </CanvasRow>
     </div>
   );
+}
+
+function CanvasRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        gap: 32,
+        alignItems: "flex-start",
+        maxWidth: 1800,
+        width: "100%",
+        margin: "0 auto",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function CanvasCell({
+  minHeight,
+  children,
+}: {
+  minHeight: number;
+  children: React.ReactNode;
+}) {
+  return <div style={{ minHeight, display: "grid" }}>{children}</div>;
 }

@@ -7,6 +7,7 @@ import "@/styles/atoms.css";
 import "@/styles/desktop.css";
 import "@/styles/mobile.css";
 import "@/styles/pair.css";
+import "@/styles/settings.css";
 
 // Expose wt to window for devtools probing during scaffold phase.
 // (Real wiring lands in Phase 3+ store / connection state.)

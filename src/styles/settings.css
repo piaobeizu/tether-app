@@ -1,0 +1,166 @@
+/* ============================================================
+   Settings (4 tabs: account / skills / connection / about)
+   ============================================================ */
+
+.set-root {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.set-head {
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.set-grid {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 0;
+}
+
+.set-nav {
+  background: var(--bg-sunken);
+  border-right: 1px solid var(--line);
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.set-nav-btn {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 10px 12px;
+  border-radius: var(--r-2);
+  display: grid;
+  gap: 3px;
+}
+.set-nav-btn:hover { background: var(--bg-tint); }
+.set-nav-btn.on {
+  background: var(--accent-tint);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.set-nav-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-primary);
+}
+.set-nav-sub {
+  font-size: 10.5px;
+  color: var(--ink-tertiary);
+}
+
+.set-body {
+  padding: 28px 36px;
+  overflow: auto;
+}
+.set-section-title {
+  font-size: 11px;
+  color: var(--ink-tertiary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  margin-bottom: 10px;
+}
+.set-row {
+  display: grid;
+  grid-template-columns: 200px 1fr auto;
+  gap: 16px;
+  padding: 14px 16px;
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  margin-bottom: 6px;
+}
+.set-row-k {
+  font-size: 13px;
+  font-weight: 500;
+}
+.set-row-v {
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+}
+
+/* ============================================================
+   Error states (banner + crash card + WT-reconnect dot)
+   ============================================================ */
+
+.err-root {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  position: relative;
+  overflow: hidden;
+}
+.err-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--warn-tint);
+  border-bottom: 1px solid #e7d3a4;
+  font-size: 13px;
+}
+.warn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--warn);
+  animation: pulse 1.4s infinite;
+}
+
+.err-center {
+  position: absolute;
+  inset: 50px 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.err-card {
+  max-width: 540px;
+  padding: 32px;
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  box-shadow: var(--sh-3);
+}
+
+.err-wt {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--sh-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wt-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ink-quat);
+}
+.wt-dot.live { background: var(--success); }
+.wt-dot.reconnecting {
+  background: var(--danger);
+  animation: pulse 1.2s infinite;
+}
