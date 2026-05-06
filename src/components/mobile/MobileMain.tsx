@@ -25,6 +25,7 @@ import {
 } from "@/blocks";
 import { Icon } from "@/blocks/Icon";
 import { useTetherStore } from "@/store";
+import type { ChatRole } from "@/store/types";
 import { PhoneFrame } from "./PhoneFrame";
 
 export function MobileMain() {
@@ -280,12 +281,29 @@ export function MobileMain() {
 }
 
 interface MobileMsgProps {
-  from: "user" | "ai";
+  from: ChatRole;
   time: string;
   children: ReactNode;
 }
 
 function MobileMsg({ from, time, children }: MobileMsgProps) {
+  if (from === "system") {
+    return (
+      <div
+        style={{
+          fontSize: 11.5,
+          color: "var(--ink-tertiary)",
+          fontStyle: "italic",
+          padding: "3px 0",
+        }}
+      >
+        <span className="mono" style={{ marginRight: 6 }}>
+          {time}
+        </span>
+        {children}
+      </div>
+    );
+  }
   if (from === "user") {
     return (
       <div

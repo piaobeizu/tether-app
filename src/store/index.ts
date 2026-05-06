@@ -202,6 +202,13 @@ export interface Actions {
   toggleCandidate: (id: string) => void;
   setForm: (patch: Partial<FormValues>) => void;
   toggleChatBlock: (key: FencedBlockKind) => void;
+  /** Append a chat message coming FROM an envelope (or any
+   *  non-user-input source). Used by AttachBridge to push agent /
+   *  hook / system rows. The `id` MUST be unique within the chat
+   *  array — callers commonly use the envelope's `sourceUuid`. If the
+   *  id is already present, the call is a no-op (idempotent across
+   *  daemon replays on reconnect). */
+  appendChat: (msg: ChatMessage) => void;
 
   // Workspaces / mobile
   setActiveWorkspace: (name: string) => void;
@@ -308,7 +315,32 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
 
 // -------- state factory --------
 
+/** Mock fallback gate — Phase 10.
+ *
+ *  Real envelope traffic drives chat + DAG once the AttachBridge is
+ *  connected. With no daemon attached, the UI would otherwise render
+ *  empty and feel dead — so in dev (`vite dev` browser preview, the
+ *  AppCanvas design surface, vitest) we seed chat + DAG with the v0.1
+ *  mock corpus so the layouts have something to lay out.
+ *
+ *  Production builds (Tauri desktop / mobile) skip the mock so the
+ *  user never sees fake agent turns mixed with real ones — they get
+ *  an honest empty chat with the connection-state banner instead.
+ *
+ *  See also: `_advanceDag` and `sendMessage` below — both gate their
+ *  mock chatter on `attachState !== "connected"` so once the bridge
+ *  comes online the mocks stop firing even in dev.
+ *
+ *  Mirrors the same gate used by `loadSkills()` (Phase 9) — Vite
+ *  defines `import.meta.env.DEV` as a build-time replaced literal so
+ *  the prod bundle dead-code-eliminates the mock import below. */
+function shouldUseMockFallback(): boolean {
+  const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
+  return env?.DEV === true;
+}
+
 function initialState(): State {
+  const mockFallback = shouldUseMockFallback();
   return {
     activeWorkspace: "tether-app",
     workspaces: initialWorkspaces,
@@ -320,9 +352,15 @@ function initialState(): State {
     paired: true,
     wtState: "live",
 
-    dag: initialDag,
+    // DAG / chat: empty in production (driven by envelopes once
+    // AttachBridge connects). Populated with the v0.1 mock corpus in
+    // dev so the design canvas / browser preview have something to
+    // render before a daemon is attached.
+    dag: mockFallback
+      ? initialDag
+      : { nodes: [], paused: false, elapsedMs: 0 },
 
-    chat: initialChat,
+    chat: mockFallback ? initialChat : [],
     picked: ["c2"],
     form: initialForm,
     composerText: "",
@@ -400,6 +438,15 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
         slashOpen: false,
       }));
 
+      // Phase 10 gating: when the AttachBridge is connected, real
+      // agent turns arrive via `output.agent-event` envelopes and the
+      // user's input would (in v0.2+) be forwarded to the daemon's
+      // SendUserMessage seam. Until that wiring lands, suppress the
+      // canned mock reply so the user doesn't see fake AI text mixed
+      // with real envelope output. Disconnected dev mode keeps the
+      // mock so the design canvas + browser preview feel alive.
+      if (get().attachState === "connected") return;
+
       const reply =
         MOCK_AI_REPLIES[Math.floor(Math.random() * MOCK_AI_REPLIES.length)] ??
         MOCK_AI_REPLIES[0]!;
@@ -444,6 +491,18 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
       }));
     },
 
+    appendChat: (msg) => {
+      // Idempotent on id — Phase-9 reconnects can replay the daemon's
+      // recent envelope buffer and we don't want duplicate rows. The
+      // dedup check is O(n) on the chat array; n stays small (chat
+      // sessions are bounded to hundreds of turns) so the explicit
+      // Set lookup isn't worth the allocation.
+      set((s) => {
+        if (s.chat.some((m) => m.id === msg.id)) return s;
+        return { chat: [...s.chat, msg] };
+      });
+    },
+
     setActiveWorkspace: (name) => {
       set({ activeWorkspace: name, drawerOpen: false });
     },
@@ -480,6 +539,13 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
       // the 1Hz re-render churn on settings / errors / pair routes
       // for components subscribed to s.dag.
       if (cur.route !== "home") return;
+      // Phase 10 gating: when the AttachBridge is connected, real DAG
+      // progress will be driven by envelope events. Disable the mock
+      // ticker so the deterministic envelope-driven tests don't see
+      // spurious node transitions from the 1Hz background timer. The
+      // ticker resumes automatically when the bridge drops back below
+      // "connected" (so disconnect → mock animation in dev).
+      if (cur.attachState === "connected") return;
       if (cur.dag.paused) return;
       const ri = cur.dag.nodes.findIndex(
         (n: DagNode) => n.status === "running",

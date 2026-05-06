@@ -91,7 +91,11 @@ export interface DagState {
   elapsedMs: number;
 }
 
-export type ChatRole = "user" | "ai";
+/** Chat message role. v0.1 supports user / ai conversational turns plus a
+ *  `system` role used for non-turn rows (hook-event echoes, "connected"
+ *  notices, reload markers). The system row uses the muted-text styling
+ *  the prototype already applied to ambient/info chat lines. */
+export type ChatRole = "user" | "ai" | "system";
 export type FencedBlockKind = "dag" | "form" | "candidates" | "media";
 
 export interface ChatMessage {
