@@ -1,16 +1,17 @@
-// Phase-4 — desktop three-column layout (§11.Y / D-19) becomes the App.
+// Phase-5 — desktop + mobile side-by-side on a design canvas.
 //
-// What's exercised: workspace tree (left), skill artifact pane with
-// DAG full block (middle), chat with composer + slash popover + 4
-// fenced-block compact renderers (right), status bar, optional error
-// banner, theme toggle.
+// Both surfaces share the Phase-2 zustand store, so a message sent
+// from one shows in the other; the chat-block compact renderers in
+// mobile/desktop both expand into the same skill detail (skill push
+// on mobile / artifact pane on desktop).
 //
-// Phase 5 adds mobile chat-first surface + a viewport switch so both
-// can coexist on the design canvas. Phase 7 brings settings + tweaks
-// (light/dark toggle moves there).
+// Phase 6 adds pair flow (desktop initiator + mobile companion).
+// Phase 7 brings settings + errors. Phase 8 adds animation polish
+// + tree virtualization.
 
 import { useEffect, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
+import { MobileMain } from "@/components/mobile/MobileMain";
 import { startMockTimers } from "@/store/timers";
 
 export function App() {
@@ -29,16 +30,10 @@ export function App() {
         padding: 24,
         display: "flex",
         flexDirection: "column",
-        gap: 12,
+        gap: 16,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <span
           style={{
             color: "var(--ink-tertiary)",
@@ -47,7 +42,7 @@ export function App() {
             letterSpacing: "0.04em",
           }}
         >
-          Phase&nbsp;4 — desktop layout (§11.Y / D-19)
+          Phase&nbsp;5 — desktop + mobile (§11.Y / D-19)
         </span>
         <button
           type="button"
@@ -58,17 +53,22 @@ export function App() {
           theme: {theme}
         </button>
       </div>
+
       <div
         style={{
-          flex: 1,
-          minHeight: 720,
           display: "grid",
-          maxWidth: 1440,
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          gap: 32,
+          alignItems: "flex-start",
+          maxWidth: 1800,
           width: "100%",
           margin: "0 auto",
         }}
       >
-        <Desktop />
+        <div style={{ minHeight: 720, display: "grid" }}>
+          <Desktop />
+        </div>
+        <MobileMain />
       </div>
     </div>
   );
