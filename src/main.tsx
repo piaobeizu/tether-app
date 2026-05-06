@@ -9,14 +9,17 @@ import "@/styles/mobile.css";
 import "@/styles/pair.css";
 import "@/styles/settings.css";
 
-// Expose wt to window for devtools probing during scaffold phase.
-// (Real wiring lands in Phase 3+ store / connection state.)
+// Dev-only: expose wt to window for devtools probing. Production
+// builds drop this branch entirely so the WT client doesn't leak to
+// the global scope where third-party content (if any) could touch it.
 declare global {
   interface Window {
     __tether_wt?: typeof wt;
   }
 }
-window.__tether_wt = wt;
+if (import.meta.env.DEV) {
+  window.__tether_wt = wt;
+}
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {

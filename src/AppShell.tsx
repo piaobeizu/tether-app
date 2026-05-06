@@ -1,25 +1,14 @@
-// Real app shell. Renders ONE surface at a time per viewport, picked
-// by store.route + useViewport():
+// Real app shell (Phase 8 + Phase-8.1 fixes).
 //
-//   desktop:
-//     home     → <Desktop />
-//     pair     → <PairDesktop />
-//     settings → <Settings />
-//     errors   → <ErrorStates />
+// Renders ONE surface at a time per (viewport, route). The route
+// lives in zustand; theme also lives in zustand and persists via
+// localStorage. The data-theme attribute is set on the shell root
+// so all token vars cascade through.
 //
-//   mobile:
-//     home     → <MobileMain />        (drawer + skill push handled internally)
-//     pair     → <PairMobile />        (3-step companion flow)
-//     settings → <Settings />          (reuses desktop's Settings; mobile
-//                                       css already gives it full bleed)
-//     errors   → <ErrorStates />
-//
-// To open the design canvas (all 8 surfaces simultaneously), append
-// `?canvas` to the URL.
-//
-// Phase-2 timers boot once on mount and live for the app's lifetime.
+// AppCanvas (?canvas in URL) is the design-time alternative — see
+// src/App.tsx for the gate.
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useTetherStore } from "@/store";
 import { startMockTimers } from "@/store/timers";
 import { useViewport } from "@/hooks/useViewport";
@@ -29,15 +18,19 @@ import { PairDesktop } from "@/components/pair/PairDesktop";
 import { PairMobile } from "@/components/pair/PairMobile";
 import { Settings } from "@/components/settings/Settings";
 import { ErrorStates } from "@/components/errors/ErrorStates";
+import type { AppRoute, Theme } from "@/store/types";
+import type { Viewport } from "@/hooks/useViewport";
 
 export function AppShell() {
   const route = useTetherStore((s) => s.route);
+  const theme = useTetherStore((s) => s.theme);
   const viewport = useViewport();
 
   useEffect(() => startMockTimers(), []);
 
   return (
     <div
+      data-theme={theme}
       style={{
         minHeight: "100vh",
         background: "var(--bg-app)",
@@ -55,7 +48,7 @@ export function AppShell() {
   );
 }
 
-function renderDesktopRoute(route: ReturnType<typeof useTetherStore.getState>["route"]) {
+function renderDesktopRoute(route: AppRoute): ReactNode {
   switch (route) {
     case "home":
       return <Desktop />;
@@ -65,10 +58,12 @@ function renderDesktopRoute(route: ReturnType<typeof useTetherStore.getState>["r
       return <Settings />;
     case "errors":
       return <ErrorStates />;
+    default:
+      return assertNever(route);
   }
 }
 
-function renderMobileRoute(route: ReturnType<typeof useTetherStore.getState>["route"]) {
+function renderMobileRoute(route: AppRoute): ReactNode {
   switch (route) {
     case "home":
       return <MobileMain />;
@@ -78,19 +73,25 @@ function renderMobileRoute(route: ReturnType<typeof useTetherStore.getState>["ro
       return <Settings />;
     case "errors":
       return <ErrorStates />;
+    default:
+      return assertNever(route);
   }
+}
+
+function assertNever(x: never): never {
+  throw new Error(`unreachable AppRoute: ${String(x)}`);
 }
 
 function SurfaceWindow({
   viewport,
   children,
 }: {
-  viewport: ReturnType<typeof useViewport>;
-  children: React.ReactNode;
+  viewport: Viewport;
+  children: ReactNode;
 }) {
-  // Mobile surfaces ship with their own PhoneFrame OR fill the
-  // viewport edge-to-edge — desktop surfaces are framed cards. Use a
-  // simple wrapper so the framing is the surface's call.
+  // Mobile surfaces fill the viewport edge-to-edge; desktop surfaces
+  // get a 24-px-padded grid so the framed cards don't sit on the
+  // browser chrome.
   if (viewport === "mobile") {
     return (
       <div
@@ -119,3 +120,7 @@ function SurfaceWindow({
     </div>
   );
 }
+
+// Re-export for tests / dev tooling that wants the constant directly.
+// (Avoids a hard import on Theme from a deeply nested module.)
+export type { Theme };

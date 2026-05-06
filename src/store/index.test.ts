@@ -143,4 +143,48 @@ describe("useTetherStore", () => {
     vi.advanceTimersByTime(3100);
     expect(useTetherStore.getState().pairMobileStep).toBe("scan");
   });
+
+  it("toggleTheme flips light ↔ dark and persists to localStorage", () => {
+    reset();
+    useTetherStore.setState({ theme: "light" });
+    useTetherStore.getState().toggleTheme();
+    expect(useTetherStore.getState().theme).toBe("dark");
+    expect(localStorage.getItem("tether.theme")).toBe("dark");
+    useTetherStore.getState().toggleTheme();
+    expect(useTetherStore.getState().theme).toBe("light");
+    expect(localStorage.getItem("tether.theme")).toBe("light");
+  });
+
+  it("setTheme persists explicit value", () => {
+    reset();
+    useTetherStore.getState().setTheme("dark");
+    expect(useTetherStore.getState().theme).toBe("dark");
+    expect(localStorage.getItem("tether.theme")).toBe("dark");
+  });
+
+  it("_advanceDag is a no-op when route is not 'home'", () => {
+    reset();
+    useTetherStore.setState({ route: "settings" });
+    const beforeElapsed = useTetherStore.getState().dag.elapsedMs;
+    const beforeNodes = useTetherStore.getState().dag.nodes;
+    useTetherStore.getState()._advanceDag();
+    const after = useTetherStore.getState().dag;
+    expect(after.elapsedMs).toBe(beforeElapsed);
+    expect(after.nodes).toBe(beforeNodes); // identity preserved → no churn
+  });
+
+  it("_tickPairTtl is a no-op when route is not 'pair'", () => {
+    reset();
+    useTetherStore.setState({ route: "home", pairTtl: 30 });
+    useTetherStore.getState()._tickPairTtl();
+    expect(useTetherStore.getState().pairTtl).toBe(30);
+  });
+
+  it("setRoute changes the top-level route", () => {
+    reset();
+    useTetherStore.getState().setRoute("settings");
+    expect(useTetherStore.getState().route).toBe("settings");
+    useTetherStore.getState().setRoute("pair");
+    expect(useTetherStore.getState().route).toBe("pair");
+  });
 });

@@ -40,7 +40,7 @@ export function Desktop() {
   const reconnect = useTetherStore((s) => s.reconnect);
   const dismissBanner = useTetherStore((s) => s.dismissBanner);
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll chat to bottom on new messages.
@@ -50,8 +50,13 @@ export function Desktop() {
     }
   }, [chat.length]);
 
-  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
+  // Keyboard contract — matches the footer hint:
+  //   ⌘↵ / Ctrl↵ → submit
+  //   ⇧↵         → newline (default textarea behavior, no preventDefault)
+  //   ↵          → newline (same)
+  //   Esc        → clear
+  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       sendMessage(composerText);
     } else if (e.key === "Escape") {
@@ -291,13 +296,15 @@ export function Desktop() {
             <div className="composer-box">
               <div className="composer-row">
                 <span className="composer-prefix mono">/</span>
-                <input
+                <textarea
                   ref={inputRef}
                   value={composerText}
                   onChange={(e) => setComposer(e.target.value)}
                   onKeyDown={onKey}
                   placeholder="message tether…"
                   className="composer-input mono"
+                  rows={1}
+                  style={{ resize: "vertical", maxHeight: 200 }}
                 />
                 <button
                   type="button"
