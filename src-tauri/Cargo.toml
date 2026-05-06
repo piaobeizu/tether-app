@@ -1,0 +1,70 @@
+[package]
+name = "tether-app"
+version = "0.1.0-dev"
+description = "tether — multi-target Tauri 2 app with self-written WebTransport command"
+authors = ["tether"]
+edition = "2021"
+rust-version = "1.77"
+
+# Library is what Tauri Mobile (Android/iOS) consumes.
+# Binary is what Desktop builds use.
+[lib]
+name = "tether_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.0", features = [] }
+
+[dependencies]
+# --- Tauri core ---
+tauri = { version = "2.11.0", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- WebTransport (THE point of this slice) ---
+# kixelated/web-transport-quinn — actively maintained, used by iroh + MoQ-rs.
+# `ring` feature avoids aws-lc-rs (which needs cmake/CC for Android cross-build
+# and is the #1 reported friction point for `aarch64-linux-android`).
+web-transport-quinn = { version = "0.11.9", default-features = false, features = ["ring"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "platform-verifier"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "logging"] }
+url = "2"
+bytes = "1"
+
+# --- Async runtime ---
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "time"] }
+
+# --- Plumbing for wt module ---
+dashmap = "6"           # concurrent map: SessionId/StreamId -> handle
+thiserror = "2"
+tracing = "0.1"
+
+# --- Plugins (added as deps but NOT fully wired — capability registration
+# is left for the next slice; see tauri.conf.json + capabilities/) ---
+tauri-plugin-fs = "2.5.1"
+tauri-plugin-deep-link = "2.4.9"
+# Stronghold is the closest cross-platform credential vault Tauri ships
+# officially; spec calls this "Keystore" generically. Real Android Keystore
+# bridging will live in a custom Tauri plugin (Epic #7 follow-up).
+tauri-plugin-stronghold = "2.3.1"
+# Barcode scanner — mobile-only, but the crate compiles on desktop as a no-op
+# so we add unconditionally for build-matrix simplicity.
+tauri-plugin-barcode-scanner = "2.4.4"
+
+# --- FCM is NOT shipped as an official Tauri plugin. ---
+# Tracking: spec §11.S push-fanout names FCM as v0.1 Android-only. The
+# Android-side bridge will be a custom Tauri plugin in `src-tauri/tauri-plugin-fcm/`
+# (out of scope for this scaffold slice).
+
+[features]
+# Default is empty so `cargo check` is fast on the desktop host.
+default = []
+# Tauri 2 expects `custom-protocol` for production builds.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
