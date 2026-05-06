@@ -1,0 +1,233 @@
+/* ============================================================
+   Pair flow (§11.J / D-16) — desktop initiator + mobile companion.
+   ============================================================ */
+
+/* -------- desktop initiator -------- */
+
+.pair-desktop {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+.pair-card {
+  width: 100%;
+  max-width: 760px;
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  box-shadow: var(--sh-3);
+  overflow: hidden;
+}
+.pair-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-elevated);
+}
+.pair-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 32px;
+  padding: 36px 32px;
+  align-items: center;
+}
+
+.qr-wrap {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  padding: 16px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+.qr-corner {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--accent);
+}
+.qr-corner.tl {
+  top: -1px;
+  left: -1px;
+  border-right: 0;
+  border-bottom: 0;
+  border-top-left-radius: 6px;
+}
+.qr-corner.tr {
+  top: -1px;
+  right: -1px;
+  border-left: 0;
+  border-bottom: 0;
+  border-top-right-radius: 6px;
+}
+.qr-corner.bl {
+  bottom: -1px;
+  left: -1px;
+  border-right: 0;
+  border-top: 0;
+  border-bottom-left-radius: 6px;
+}
+.qr-corner.br {
+  bottom: -1px;
+  right: -1px;
+  border-left: 0;
+  border-top: 0;
+  border-bottom-right-radius: 6px;
+}
+
+.pair-code {
+  margin-top: 22px;
+  display: flex;
+  gap: 6px;
+}
+.pair-code span {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 24px;
+  width: 38px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+.pair-code span:nth-child(4) {
+  width: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-quat);
+}
+
+.pair-meta {
+  margin-top: 18px;
+  padding: 12px 14px;
+  background: var(--bg-code);
+  border-radius: var(--r-2);
+  font-size: 11.5px;
+  display: grid;
+  gap: 5px;
+}
+.pair-meta div {
+  display: flex;
+  justify-content: space-between;
+}
+.pair-meta div span:first-child {
+  color: var(--ink-tertiary);
+}
+
+.pair-actions {
+  margin-top: 18px;
+  display: flex;
+  gap: 8px;
+}
+
+/* -------- mobile companion: scan viewfinder -------- */
+
+.scan-frame {
+  position: relative;
+  width: 240px;
+  aspect-ratio: 1 / 1;
+  background: #1a1815;
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.sc {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 2.5px solid var(--accent);
+}
+.sc.tl {
+  top: 8px;
+  left: 8px;
+  border-right: 0;
+  border-bottom: 0;
+  border-top-left-radius: 8px;
+}
+.sc.tr {
+  top: 8px;
+  right: 8px;
+  border-left: 0;
+  border-bottom: 0;
+  border-top-right-radius: 8px;
+}
+.sc.bl {
+  bottom: 8px;
+  left: 8px;
+  border-right: 0;
+  border-top: 0;
+  border-bottom-left-radius: 8px;
+}
+.sc.br {
+  bottom: 8px;
+  right: 8px;
+  border-left: 0;
+  border-top: 0;
+  border-bottom-right-radius: 8px;
+}
+.scan-line {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: scan 2s ease-in-out infinite;
+}
+
+@keyframes scan {
+  0%, 100% { top: 16px; }
+  50%      { top: calc(100% - 18px); }
+}
+
+/* -------- mobile companion: confirm sheet -------- */
+
+.pair-confirm-sheet {
+  background: var(--bg-surface);
+  border-radius: 24px 24px 0 0;
+  padding: 24px 18px 22px;
+}
+.pair-fp-card {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--bg-app);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+/* The mobile pair flow uses its OWN button atom variants (slightly
+   different padding from the chat-screen `.m-btn-*` in mobile.css).
+   Scope these to .pair-confirm-sheet so they don't override there. */
+.pair-confirm-sheet .m-btn-ghost {
+  padding: 13px 14px;
+  font: 500 13px var(--font-sans);
+  background: var(--bg-app);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+.pair-confirm-sheet .m-btn-primary {
+  padding: 13px 14px;
+  font: 500 13.5px var(--font-sans);
+  background: var(--ink-primary);
+  color: var(--bg-elevated);
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
