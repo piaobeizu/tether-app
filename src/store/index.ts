@@ -477,9 +477,13 @@ export const useTetherStore = create<Slice>()((set, get) => ({
 // rather than crashing. Phase 9 swaps loadSkills() to a real Tauri
 // command without changing this call site.
 //
-// Skipped under test (vitest sets `import.meta.vitest`) so unit tests
-// can deterministically seed via `_setSkills` without racing the
-// resolver.
+// Test-mode behavior: the `typeof window !== "undefined"` gate is a
+// browser-vs-SSR check, NOT a test-vs-prod check — vitest's happy-dom
+// runtime defines `window`, so the loader DOES run under vitest. Tests
+// that want a deterministic skills list MUST override post-mount via
+// `useTetherStore.setState({ skills: [...] })` or call `_setSkills` to
+// race against (or after) the resolver — they cannot rely on the
+// loader being skipped.
 if (typeof window !== "undefined") {
   loadSkills()
     .then((skills) => {

@@ -48,15 +48,57 @@ const MOCK_SKILLS: readonly Skill[] = [
  * Load the user's installed skills.
  *
  * v0.1 returns a fixed mock list. Phase 9 will replace the body with
- * `await invoke<Skill[]>('tether_skill_list')` once the Tauri command
- * bridges to the Go-side `tether skill list` CLI. The signature does
- * not change.
+ * a Tauri command bridging to the Go-side `tether skill list` CLI.
+ * The TS-facing signature does NOT change — but the body has to do
+ * field translation, because the Go and TS shapes are not identical:
+ *
+ *   Go side (cmd/tether/skill.go → JSON over the bridge):
+ *     {
+ *       "name":        "refactor.code",
+ *       "version":     "0.4.2",
+ *       "description": "DAG-driven code restructuring",
+ *       // (no `on` — enablement lives in tether.toml; Go side returns
+ *       //  it via a separate field once that PR lands; v0.1 mock
+ *       //  hard-codes true)
+ *       // (no `update` — pulled from a separate skill-registry probe)
+ *     }
+ *
+ *   TS side (./types.ts Skill):
+ *     {
+ *       name:    string;
+ *       v:       string;     // ← Go.version
+ *       on:      boolean;    // ← Go.enabled (TBD field) || true
+ *       update?: string;     // ← from the registry probe, optional
+ *       desc:    string;     // ← Go.description
+ *     }
+ *
+ * Phase 9 implementation skeleton (kept as a comment, not active):
+ *
+ *   const raw = await invoke<Array<{
+ *     name: string; version: string; description: string;
+ *     enabled?: boolean; updateAvailable?: string;
+ *   }>>('tether_skill_list');
+ *   return raw.map((s) => ({
+ *     name: s.name,
+ *     v:    s.version,
+ *     on:   s.enabled ?? true,
+ *     update: s.updateAvailable,
+ *     desc: s.description,
+ *   }));
+ *
+ * If we instead align the TS shape to the Go shape (name/version/
+ * description/enabled), the rename touches every component that
+ * reads `s.v` / `s.on` / `s.desc` (settings drawer, mobile skill
+ * page) — Phase 9 should do the field mapping HERE rather than
+ * propagate the Go names into the UI. This is the call site to come
+ * back to; mock and real both pass through this function.
  */
 export async function loadSkills(): Promise<Skill[]> {
   // Defer one tick so consumers see the "loading" empty-list state
   // before the data lands — mirrors the network round-trip Phase 9
-  // will incur for real.
-  return new Promise((resolve) => {
-    setTimeout(() => resolve(MOCK_SKILLS.map((s) => ({ ...s }))), 0);
-  });
+  // will incur for real. Promise.resolve() (microtask) instead of
+  // setTimeout(0) (macrotask) so vitest fake-timers don't have to
+  // advance to drain the queue.
+  await Promise.resolve();
+  return MOCK_SKILLS.map((s) => ({ ...s }));
 }
