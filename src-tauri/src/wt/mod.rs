@@ -9,12 +9,15 @@
 //! (kixelated, actively maintained, used by iroh + MoQ-rs).
 //!
 //! Surface (intentionally minimal — see spec §11.V "JS shim 不抄 W3C IDL"):
-//!   - wt_connect    → SessionId
-//!   - wt_open_bidi  → StreamId
-//!   - wt_open_uni   → StreamId
-//!   - wt_send       → ()
-//!   - wt_recv       → Vec<u8> | null   (null = peer cleanly closed)
-//!   - wt_close      → ()
+//!   - wt_connect       → SessionId
+//!   - wt_open_bidi     → StreamId
+//!   - wt_open_uni      → StreamId
+//!   - wt_send          → ()
+//!   - wt_recv          → Vec<u8> | null   (null = peer cleanly closed,
+//!                                          stream auto-evicted)
+//!   - wt_close_stream  → ()               (per-stream explicit close)
+//!   - wt_close         → ()               (session close — also drains
+//!                                          every stream opened against it)
 //!
 //! Threading model: each command runs on Tauri's async executor; the
 //! per-session/stream state lives in a `dashmap` indexed by opaque u64 IDs
@@ -121,6 +124,16 @@ pub async fn wt_recv(
 }
 
 #[tauri::command]
+pub async fn wt_close_stream(
+    stream_id: StreamId,
+    state: State<'_, WtState>,
+) -> WtResult<()> {
+    close_stream_inner(&stream_id, state.inner())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn wt_close(
     session_id: SessionId,
     state: State<'_, WtState>,
@@ -156,6 +169,7 @@ async fn connect_inner(
 }
 
 async fn open_bidi_inner(sid: &SessionId, state: &WtState) -> Result<StreamId, WtError> {
+    let session_num_id = WtState::parse_session_id(&sid.0)?;
     let entry = state.get_session(&sid.0)?;
     let session = entry.session.clone();
 
@@ -164,14 +178,18 @@ async fn open_bidi_inner(sid: &SessionId, state: &WtState) -> Result<StreamId, W
         .await
         .map_err(|e| WtError::Stream(e.to_string()))?;
 
-    let id = state.insert_stream(StreamEntry::Bidi {
-        send: tokio::sync::Mutex::new(send).into(),
-        recv: tokio::sync::Mutex::new(recv).into(),
-    });
+    let id = state.insert_stream(
+        session_num_id,
+        StreamEntry::Bidi {
+            send: tokio::sync::Mutex::new(send).into(),
+            recv: tokio::sync::Mutex::new(recv).into(),
+        },
+    );
     Ok(StreamId(id.to_string()))
 }
 
 async fn open_uni_inner(sid: &SessionId, state: &WtState) -> Result<StreamId, WtError> {
+    let session_num_id = WtState::parse_session_id(&sid.0)?;
     let entry = state.get_session(&sid.0)?;
     let session = entry.session.clone();
 
@@ -180,9 +198,12 @@ async fn open_uni_inner(sid: &SessionId, state: &WtState) -> Result<StreamId, Wt
         .await
         .map_err(|e| WtError::Stream(e.to_string()))?;
 
-    let id = state.insert_stream(StreamEntry::Uni {
-        send: tokio::sync::Mutex::new(send).into(),
-    });
+    let id = state.insert_stream(
+        session_num_id,
+        StreamEntry::Uni {
+            send: tokio::sync::Mutex::new(send).into(),
+        },
+    );
     Ok(StreamId(id.to_string()))
 }
 
@@ -200,6 +221,7 @@ async fn send_inner(sid: &StreamId, bytes: Vec<u8>, state: &WtState) -> Result<(
 }
 
 async fn recv_inner(sid: &StreamId, state: &WtState) -> Result<Option<Vec<u8>>, WtError> {
+    let stream_num_id = WtState::parse_stream_id(&sid.0)?;
     let entry = state.get_stream(&sid.0)?;
     let recv = entry
         .recv_handle()
@@ -213,7 +235,15 @@ async fn recv_inner(sid: &StreamId, state: &WtState) -> Result<Option<Vec<u8>>, 
         .await
         .map_err(|e| WtError::Io(e.to_string()))?
     {
-        None => Ok(None), // peer cleanly closed send side
+        None => {
+            // Peer cleanly half-closed. The stream is no longer usable —
+            // drop the registry entry so we don't leak (BLOCKER 1 fix).
+            // Drop the lock guard before removing the entry, otherwise the
+            // remove will succeed but we'd be holding a stale `recv` Arc.
+            drop(guard);
+            state.remove_stream(stream_num_id);
+            Ok(None)
+        }
         Some(n) => {
             buf.truncate(n);
             Ok(Some(buf))
@@ -221,7 +251,15 @@ async fn recv_inner(sid: &StreamId, state: &WtState) -> Result<Option<Vec<u8>>, 
     }
 }
 
+async fn close_stream_inner(sid: &StreamId, state: &WtState) -> Result<(), WtError> {
+    let id = WtState::parse_stream_id(&sid.0)?;
+    state.remove_stream(id);
+    Ok(())
+}
+
 async fn close_inner(sid: &SessionId, state: &WtState) -> Result<(), WtError> {
+    // `remove_session` drains every stream registered against this session
+    // before returning the entry (BLOCKER 1 fix).
     let entry = state.remove_session(&sid.0)?;
     entry.session.close(0u32, b"client closed");
     Ok(())

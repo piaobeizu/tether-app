@@ -36,7 +36,16 @@ export interface WtStream {
   send(data: Uint8Array): Promise<void>;
   /**
    * Read the next chunk from the stream.
-   * Returns `null` when the peer has cleanly closed its send side.
+   * Returns `null` when the peer has cleanly closed its send side. When
+   * `null` is returned the Rust side has already evicted the stream
+   * registry entry — calling `send()` / `recv()` on this stream after
+   * that will reject with `unknown stream`.
    */
   recv(): Promise<Uint8Array | null>;
+  /**
+   * Explicitly evict the stream from the Rust-side registry. Idempotent.
+   * Use after the JS side abandons a stream that hasn't yet seen a clean
+   * peer-close (otherwise the registry row leaks until session close).
+   */
+  close(): Promise<void>;
 }

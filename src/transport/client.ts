@@ -16,6 +16,7 @@ const CMD = {
   open_uni: "wt_open_uni",
   send: "wt_send",
   recv: "wt_recv",
+  close_stream: "wt_close_stream",
   close: "wt_close",
 } as const;
 
@@ -43,6 +44,21 @@ class WtStreamImpl implements WtStream {
     });
     if (out === null) return null;
     return Uint8Array.from(out);
+  }
+
+  /**
+   * Explicitly evict the stream from the Rust-side registry. Idempotent —
+   * calling on an already-closed stream is a no-op. Strongly recommended
+   * after the JS side is done with a stream so the registry doesn't leak
+   * (PR-3 review BLOCKER 1).
+   *
+   * Note: `recv()` returning `null` (peer cleanly half-closed) ALSO
+   * auto-evicts on the Rust side, so explicit `.close()` is only needed
+   * when the JS side abandons a stream that hasn't seen a clean
+   * peer-close yet.
+   */
+  async close(): Promise<void> {
+    await call<void>("close_stream", CMD.close_stream, { streamId: this.id });
   }
 }
 
