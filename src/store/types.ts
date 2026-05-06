@@ -32,6 +32,11 @@ export interface Workspace {
 
 export type MobileRoute = "main" | "skill" | "pair";
 
+/** Top-level route for the real app shell (Phase 8+). The design
+ *  canvas mode at App.canvas.tsx ignores this and renders all
+ *  surfaces simultaneously. */
+export type AppRoute = "home" | "pair" | "settings" | "errors";
+
 export type DagNodeStatus = "queued" | "running" | "done" | "error";
 
 export interface DagNode {

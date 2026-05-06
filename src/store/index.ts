@@ -24,6 +24,7 @@ import {
   initialWorkspaces,
 } from "./mock";
 import type {
+  AppRoute,
   ChatExpanded,
   ChatMessage,
   Connection,
@@ -78,6 +79,10 @@ export interface State {
   pairCode: string;
   pairTtl: number;
   pairMobileStep: PairMobileStep;
+
+  // Top-level shell route (Phase 8). Drives <AppShell />; ignored
+  // by the design-canvas App where every surface is rendered.
+  route: AppRoute;
 }
 
 export interface Actions {
@@ -115,6 +120,9 @@ export interface Actions {
   confirmPair: () => void;
   /** Internal — used by the TTL countdown ticker. */
   _tickPairTtl: () => void;
+
+  // Routing (Phase 8)
+  setRoute: (route: AppRoute) => void;
 }
 
 export type Slice = State & Actions;
@@ -192,6 +200,8 @@ function initialState(): State {
     pairCode: "4F2-9K7",
     pairTtl: 47,
     pairMobileStep: "scan",
+
+    route: "home",
   };
 }
 
@@ -388,6 +398,10 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
           ? { pairTtl: PAIR_TTL_INITIAL, pairCode: regenCode() }
           : { pairTtl: s.pairTtl - 1 },
       );
+    },
+
+    setRoute: (route) => {
+      set({ route });
     },
   };
 }
