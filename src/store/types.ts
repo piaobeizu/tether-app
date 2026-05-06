@@ -9,6 +9,19 @@
 export type ConnectionState = "live" | "reconnecting" | "dropped";
 export type WtState = "live" | "reconnecting";
 
+/** Daemon attach bridge state — the local Unix socket pump that
+ *  AppShell opens against `~/.tether/attach.sock`. Distinct from the
+ *  device-to-device WT state above (which fronts the cross-network
+ *  WebTransport session). v0.1: surfaces via the connection-state slice
+ *  so the existing banner UI works without rewiring. */
+export type AttachState =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error"
+  | "no-daemon";
+
 export interface Connection {
   state: ConnectionState;
   /** ms; null while reconnecting or dropped */

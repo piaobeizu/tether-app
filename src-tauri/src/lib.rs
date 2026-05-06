@@ -15,14 +15,18 @@
 // blake3-style hashing using `std::collections::hash_map::DefaultHasher`
 // — explicitly NOT production-grade. See TODO below.
 
+mod attach;
+mod skills;
 mod wt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let wt_state = wt::WtState::default();
+    let attach_state = attach::AttachState::default();
 
     let builder = tauri::Builder::default()
         .manage(wt_state)
+        .manage(attach_state)
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_deep_link::init())
         // TODO(security-review): replace with a real Argon2id-based key
@@ -64,6 +68,10 @@ pub fn run() {
             wt::wt_recv,
             wt::wt_close_stream,
             wt::wt_close,
+            attach::tether_attach_subscribe,
+            attach::tether_attach_unsubscribe,
+            attach::tether_attach_send_input,
+            skills::tether_skill_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
