@@ -134,3 +134,17 @@ export interface SlashCommand {
   cmd: string;
   desc: string;
 }
+
+/** Pending auth-tool-request the user must answer. Mirrors
+ *  AuthToolRequestMetadata in src/transport/auth.ts; duplicated here as a
+ *  store-level type so consumers don't have to reach into transport/. */
+export interface PendingAuthRequest {
+  requestId: string;
+  toolName: string;
+  /** Verbatim cc tool_input (any shape). */
+  toolInput: unknown;
+  summary: string;
+  /** sessionId the request belongs to — kept for future per-session
+   *  routing of decisions on multi-session daemons. */
+  sessionId: string;
+}

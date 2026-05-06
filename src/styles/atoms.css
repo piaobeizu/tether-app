@@ -118,3 +118,71 @@
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.35; }
 }
+
+/* -------- auth prompt modal -------- */
+
+.auth-prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.auth-prompt-dialog {
+  width: min(520px, 100%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3, 8px);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+}
+
+.auth-prompt-title {
+  font: 600 15px var(--font-sans);
+  color: var(--ink-primary);
+  margin: 0;
+}
+
+.auth-prompt-summary {
+  font: 400 13px var(--font-sans);
+  color: var(--ink-secondary);
+  margin: 0;
+  word-break: break-word;
+}
+
+.auth-prompt-input {
+  font: 400 11.5px var(--font-mono);
+  color: var(--ink-primary);
+  background: var(--bg-tint);
+  padding: 10px;
+  border-radius: var(--r-2);
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.auth-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.auth-prompt-actions button {
+  flex: 1 1 auto;
+}
+
+.auth-prompt-tip {
+  font: 400 11px var(--font-mono);
+  color: var(--ink-tertiary, var(--ink-secondary));
+  margin: 0;
+}
