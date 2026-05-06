@@ -25,19 +25,36 @@ const MAX_RECONNECTS = 5;
 
 /** Stable per-app device id. We just persist a uuid in localStorage so
  *  the daemon's lock-attribution treats reconnects from this app as the
- *  same client. v0.1: not crypto-grade, just a stable identifier. */
+ *  same client.
+ *
+ *  Uses `crypto.randomUUID()` (cryptographically secure RNG, available
+ *  in all Tauri webview targets — desktop WebView2/WKWebView and
+ *  mobile WebView 78+) instead of `Math.random()` so two app installs
+ *  are vanishingly unlikely to collide on a deviceId. Collisions
+ *  would mis-attribute another user's lock to this app in the
+ *  daemon's `lock.History` audit trail. */
 const DEVICE_ID_STORAGE_KEY = "tether.attach.deviceId";
+
+function generateDeviceId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `ui-app-${crypto.randomUUID()}`;
+  }
+  // Last-resort fallback for ancient runtimes (should never trigger
+  // in any Tauri-supported target). Marked with a -fallback suffix so
+  // it shows up in lock.History if anyone ever sees one.
+  return `ui-app-fallback-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function deviceId(): string {
   if (typeof window === "undefined") return "ui-app-headless";
   try {
     const existing = window.localStorage.getItem(DEVICE_ID_STORAGE_KEY);
     if (existing) return existing;
-    const fresh = `ui-app-${Math.random().toString(36).slice(2, 10)}`;
+    const fresh = generateDeviceId();
     window.localStorage.setItem(DEVICE_ID_STORAGE_KEY, fresh);
     return fresh;
   } catch {
-    return `ui-app-${Math.random().toString(36).slice(2, 10)}`;
+    return generateDeviceId();
   }
 }
 
@@ -90,7 +107,7 @@ export function AttachBridge() {
               setAttachState("error", event.error ?? "attach error");
               scheduleReconnect();
             } else if (event.state === "dropped") {
-              setAttachState("reconnecting", "daemon dropped the connection");
+              setAttachState("backoff-pending", "daemon dropped the connection");
               scheduleReconnect();
             }
           },

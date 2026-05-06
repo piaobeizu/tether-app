@@ -34,9 +34,16 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+
+/// Wall-clock budget for one `tether skill list --json` invocation.
+/// 10s is generous — happy path is ~10ms — but covers slow disks /
+/// stalled NFS mounts under `~/.tether/skills/` without hanging the
+/// Settings tab forever.
+const SKILL_LIST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -63,13 +70,20 @@ pub async fn tether_skill_list() -> Result<Vec<SkillRow>, String> {
             .to_string()
     })?;
 
-    let output = Command::new(&bin)
+    let spawn = Command::new(&bin)
         .args(["skill", "list", "--json"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .output();
+    let output = tokio::time::timeout(SKILL_LIST_TIMEOUT, spawn)
         .await
+        .map_err(|_| {
+            format!(
+                "tether skill list timed out after {}s — daemon binary may be hung",
+                SKILL_LIST_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("spawn {} skill list: {e}", bin.display()))?;
 
     if !output.status.success() {
@@ -87,10 +101,13 @@ pub async fn tether_skill_list() -> Result<Vec<SkillRow>, String> {
 /// Locate the `tether` binary. Strategy:
 ///
 /// 1. `TETHER_BIN` env override (used by tests + dev iteration).
-/// 2. First entry on `$PATH`.
-/// 3. `~/.cargo/bin/tether` (standard `go install` lands here on some
-///    layouts, and `cargo install` for any future Rust port).
-/// 4. `~/go/bin/tether` (default `go install` GOPATH layout).
+/// 2. Walk `$PATH` (cross-platform — uses `std::env::split_paths` so
+///    Windows' `;` separator works alongside POSIX `:`).
+/// 3. `~/.cargo/bin/tether{.exe}` (standard `cargo install` layout).
+/// 4. `~/go/bin/tether{.exe}` (default `go install` GOPATH layout).
+///
+/// Binary basename uses `std::env::consts::EXE_EXTENSION` so Windows
+/// resolves `tether.exe` while POSIX resolves `tether`.
 fn locate_tether_binary() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("TETHER_BIN") {
         let pb = PathBuf::from(&p);
@@ -98,17 +115,26 @@ fn locate_tether_binary() -> Option<PathBuf> {
             return Some(pb);
         }
     }
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in path.split(':') {
-            let candidate = PathBuf::from(dir).join("tether");
+    let basename = format!(
+        "tether{}{}",
+        if std::env::consts::EXE_EXTENSION.is_empty() {
+            ""
+        } else {
+            "."
+        },
+        std::env::consts::EXE_EXTENSION
+    );
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(&basename);
             if candidate.is_file() {
                 return Some(candidate);
             }
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        for sub in [".cargo/bin/tether", "go/bin/tether"] {
-            let candidate = PathBuf::from(&home).join(sub);
+    if let Some(home) = std::env::var_os("HOME") {
+        for sub in [".cargo/bin", "go/bin"] {
+            let candidate = PathBuf::from(&home).join(sub).join(&basename);
             if candidate.is_file() {
                 return Some(candidate);
             }
@@ -118,8 +144,19 @@ fn locate_tether_binary() -> Option<PathBuf> {
 }
 
 fn parse_skill_list_json(stdout: &[u8]) -> Result<Vec<SkillRow>, String> {
-    if stdout.is_empty() {
-        return Ok(vec![]);
+    // The daemon ALWAYS emits at least `[]\n` for `--json` (see
+    // cmd/tether/skill.go: "Always emit a JSON array even when
+    // empty"). Empty stdout therefore means the binary on disk is
+    // older than the --json flag — surface as a typed version-skew
+    // error instead of silently returning an empty list (which would
+    // make the user think they have no skills installed).
+    if stdout.iter().all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r')) {
+        return Err(
+            "daemon emitted no JSON for `tether skill list --json` — \
+            the `tether` binary is too old to support the --json flag. \
+            Install the latest tether from this repo and try again."
+                .to_string(),
+        );
     }
     serde_json::from_slice::<Vec<SkillRow>>(stdout)
         .map_err(|e| format!("parse `tether skill list --json` output: {e}"))
@@ -153,9 +190,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_stdout_returns_empty_list() {
-        let rows = parse_skill_list_json(b"").unwrap();
-        assert!(rows.is_empty());
+    fn empty_stdout_surfaces_version_skew_error() {
+        // Empty / whitespace-only stdout is treated as "binary too old
+        // to support --json", NOT as "no skills installed". The
+        // daemon's contract is `[]` for empty.
+        let err = parse_skill_list_json(b"").unwrap_err();
+        assert!(err.contains("too old"), "expected version-skew error, got {err}");
+        let err = parse_skill_list_json(b"\n  \t").unwrap_err();
+        assert!(err.contains("too old"), "expected version-skew error, got {err}");
     }
 
     #[test]

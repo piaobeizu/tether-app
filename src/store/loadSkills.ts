@@ -6,15 +6,20 @@
 //
 // In a non-Tauri environment (e.g. plain `vite dev` browser preview,
 // vitest happy-dom runtime), `@tauri-apps/api/core::invoke` is not
-// wired and throws. We catch and fall back to a small mock list so:
-//   - tests that don't mock invoke get a stable list
-//   - browser preview still renders the Settings → skills tab
-// Production (Tauri webview) always hits the real command.
+// wired and throws. The fallback behavior is **gated on `import.meta.env.DEV`**:
+//
+//   - DEV builds (vite dev / vitest): fall back to a small mock list
+//     so the Settings → skills tab renders + tests can run without
+//     mocking invoke explicitly.
+//   - PROD builds (Tauri webview): the error PROPAGATES — we do NOT
+//     silently substitute a hard-coded list. A missing `tether`
+//     binary or subprocess failure must be surfaced to the user, not
+//     hidden behind 5 fake skills that happen to look real.
 //
 // D-20 freeze rule (spec §11.Z): UI must NOT bake skill metadata into
-// compiled-in arrays — it has to come from `tether skill list`. The
-// MOCK_SKILLS fallback below exists ONLY for the dev-server preview +
-// vitest pathways, NOT as the production source.
+// compiled-in arrays — it has to come from `tether skill list`. Gating
+// the fallback on DEV keeps the freeze rule's spirit intact: the mock
+// list cannot serve the production path even if the daemon disappears.
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Skill } from "./types";
@@ -89,23 +94,27 @@ export function mapSkill(raw: RawSkill): Skill {
  *   1. Try the Tauri `tether_skill_list` command. In Tauri webview
  *      this round-trips to the Rust side which shells out to
  *      `tether skill list --json`.
- *   2. On any invoke failure (no Tauri host, missing `tether` binary,
- *      subprocess error), fall back to MOCK_SKILLS so the UI stays
- *      usable in dev preview + tests.
- *
- * The fallback is a UX safety net, NOT the production source — see the
- * file header for the D-20 rationale.
+ *   2a. On invoke failure in **DEV** (vite dev preview / vitest): fall
+ *       back to MOCK_SKILLS so the UI stays usable.
+ *   2b. On invoke failure in **PROD** (Tauri webview): RETHROW the
+ *       error. The store's kickoff (src/store/index.ts) catches it
+ *       and surfaces via the same `errorBannerVisible` path the
+ *       attach socket uses. We do NOT silently render a hard-coded
+ *       skill list in production — see the file header on D-20.
  */
 export async function loadSkills(): Promise<Skill[]> {
   try {
     const raw = await invoke<RawSkill[]>("tether_skill_list");
     return raw.map(mapSkill);
-  } catch {
-    // Defer one tick so consumers see the "loading" empty-list state
-    // before the data lands. Promise.resolve() (microtask) instead of
-    // setTimeout(0) (macrotask) so vitest fake-timers don't have to
-    // advance to drain the queue.
-    await Promise.resolve();
-    return MOCK_SKILLS.map((s) => ({ ...s }));
+  } catch (err) {
+    if (import.meta.env.DEV) {
+      // Defer one tick so consumers see the "loading" empty-list state
+      // before the data lands. Promise.resolve() (microtask) instead of
+      // setTimeout(0) (macrotask) so vitest fake-timers don't have to
+      // advance to drain the queue.
+      await Promise.resolve();
+      return MOCK_SKILLS.map((s) => ({ ...s }));
+    }
+    throw err;
   }
 }

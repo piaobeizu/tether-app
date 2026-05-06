@@ -59,8 +59,15 @@ use tokio_util::sync::CancellationToken;
 
 pub use state::AttachState;
 
-/// 1 MiB — matches `agent.ReadFrame` ceiling.
+/// 1 MiB — matches `agent.ReadFrame` ceiling on inbound frames.
 const MAX_FRAME_BYTES: u32 = 1 << 20;
+
+/// 1 MiB — matches `agent.ReadFrame` ceiling on outbound input frames
+/// too. Without this cap the Rust command would happily forward an
+/// arbitrarily-large `Vec<u8>` from the webview to the daemon, which
+/// would error on read and drop the connection mid-write — turning a
+/// webview bug (or XSS-injected JS) into a lock-DoS.
+const MAX_INPUT_FRAME_BYTES: usize = 1 << 20;
 
 /// Opaque handle the frontend passes to `tether_attach_unsubscribe`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,13 +84,17 @@ pub struct AttachClient {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachOptions {
-    /// Optional override for the socket path. None = `~/.tether/attach.sock`.
-    #[serde(default)]
-    pub socket_path: Option<String>,
     /// Connect deadline in ms (the underlying tokio dial honors this via
     /// `tokio::time::timeout`). 0 / missing = 5s.
     #[serde(default)]
     pub connect_timeout_ms: Option<u64>,
+    // NOTE: there's intentionally no `socket_path` override on this
+    // struct. The frontend MUST NOT be able to point the bridge at an
+    // arbitrary Unix socket — sessionId/deviceId could otherwise leak
+    // to an attacker-controlled socket via a webview XSS or buggy
+    // composer. The path is resolved server-side via the env var
+    // `TETHER_ATTACH_SOCKET` (operator-controlled) or, by default,
+    // `$HOME/.tether/attach.sock`.
 }
 
 /// Wire shape of the JSON header sent on connect. Mirrors
@@ -148,10 +159,11 @@ pub async fn tether_attach_subscribe(
     };
 
     let opts = options.unwrap_or(AttachOptions {
-        socket_path: None,
         connect_timeout_ms: None,
     });
-    let socket_path = resolve_socket_path(opts.socket_path.as_deref())?;
+    // socket path is operator-controlled (env var or $HOME default), NOT
+    // frontend-controlled. See AttachOptions doc for rationale.
+    let socket_path = resolve_socket_path()?;
     let connect_timeout = Duration::from_millis(opts.connect_timeout_ms.unwrap_or(5_000));
 
     let id = NEXT_SUB.fetch_add(1, Ordering::Relaxed);
@@ -223,6 +235,16 @@ pub async fn tether_attach_send_input(
         .0
         .parse()
         .map_err(|_| format!("attach: bad subscriptionId {:?}", subscription_id.0))?;
+    // Bound the outbound frame at the same 1 MiB the daemon enforces
+    // on read. Surfaces the error to the caller without dropping the
+    // socket — the connection survives so the user retries.
+    if bytes.len() > MAX_INPUT_FRAME_BYTES {
+        return Err(format!(
+            "attach: input frame too large: {} bytes (max {})",
+            bytes.len(),
+            MAX_INPUT_FRAME_BYTES
+        ));
+    }
     let send = attach_state
         .send_handle(id)
         .ok_or_else(|| format!("attach: subscription {id} not found or read-only"))?;
@@ -278,7 +300,10 @@ async fn run_subscription(
         if let Some(state) = app.try_state::<AttachState>() {
             // Best-effort — if the subscription was already canceled,
             // the state row is gone and we just don't register.
-            let id: u64 = sub_id.parse().unwrap_or(0);
+            // sub_id is a `u64::to_string()` produced just above —
+            // expect() catches future refactor regressions loudly
+            // instead of silently registering id=0.
+            let id: u64 = sub_id.parse().expect("sub_id was produced from u64");
             state.attach_send(id, write_half.clone());
         }
     }
@@ -352,16 +377,15 @@ fn emit_state(app: &AppHandle, sub_id: &str, state: &'static str, error: Option<
     let _ = app.emit("attach://state", payload);
 }
 
-/// Resolve the user's `~/.tether/attach.sock` (or honor a CLI/env
-/// override). Mirrors `agent.DefaultAttachSocketPath` on the daemon.
-fn resolve_socket_path(override_path: Option<&str>) -> Result<PathBuf, String> {
-    if let Some(p) = override_path {
-        if !p.is_empty() {
-            return Ok(PathBuf::from(p));
-        }
-    }
-    // Env override takes precedence over the home-dir default; mirrors
-    // the daemon's own --attach-socket flag for symmetry.
+/// Resolve the user's `~/.tether/attach.sock`, honoring an
+/// operator-set `TETHER_ATTACH_SOCKET` env var. Mirrors
+/// `agent.DefaultAttachSocketPath` on the daemon.
+///
+/// **Not** a frontend-controlled override — see `AttachOptions` for
+/// the threat-model rationale.
+fn resolve_socket_path() -> Result<PathBuf, String> {
+    // Env override (operator-set, e.g. `tether daemon --attach-socket=...`
+    // mirror) takes precedence over the home-dir default.
     if let Ok(p) = std::env::var("TETHER_ATTACH_SOCKET") {
         if !p.is_empty() {
             return Ok(PathBuf::from(p));
@@ -398,6 +422,13 @@ where
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::sync::Mutex;
+
+    /// Process-wide lock for tests that mutate env vars. `cargo test`
+    /// runs tests in parallel by default; without this, two
+    /// `set_var/remove_var` callers race and the assertions become
+    /// luck-of-scheduler.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn header_serializes_to_expected_shape() {
@@ -419,31 +450,35 @@ mod tests {
     }
 
     #[test]
-    fn resolve_socket_path_honors_explicit_override() {
-        let p = resolve_socket_path(Some("/tmp/explicit.sock")).unwrap();
-        assert_eq!(p, PathBuf::from("/tmp/explicit.sock"));
-    }
-
-    #[test]
-    fn resolve_socket_path_honors_env_when_no_override() {
-        // Save / restore — env mutation in tests is process-wide. We
-        // serialize via a unique name to avoid colliding with parallel
-        // tests in the same crate.
+    fn resolve_socket_path_honors_env() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var("TETHER_ATTACH_SOCKET").ok();
         std::env::set_var("TETHER_ATTACH_SOCKET", "/tmp/from-env.sock");
-        let p = resolve_socket_path(None).unwrap();
+        let p = resolve_socket_path().unwrap();
         assert_eq!(p, PathBuf::from("/tmp/from-env.sock"));
-        std::env::remove_var("TETHER_ATTACH_SOCKET");
+        match saved {
+            Some(v) => std::env::set_var("TETHER_ATTACH_SOCKET", v),
+            None => std::env::remove_var("TETHER_ATTACH_SOCKET"),
+        }
     }
 
     #[test]
     fn resolve_socket_path_defaults_under_home() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_env = std::env::var("TETHER_ATTACH_SOCKET").ok();
+        let saved_home = std::env::var("HOME").ok();
         std::env::remove_var("TETHER_ATTACH_SOCKET");
         std::env::set_var("HOME", "/home/test-user");
-        let p = resolve_socket_path(None).unwrap();
-        assert_eq!(
-            p,
-            PathBuf::from("/home/test-user/.tether/attach.sock")
-        );
+        let p = resolve_socket_path().unwrap();
+        assert_eq!(p, PathBuf::from("/home/test-user/.tether/attach.sock"));
+        match saved_env {
+            Some(v) => std::env::set_var("TETHER_ATTACH_SOCKET", v),
+            None => std::env::remove_var("TETHER_ATTACH_SOCKET"),
+        }
+        match saved_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
     }
 
     #[tokio::test]
@@ -453,5 +488,13 @@ mod tests {
         write_input_frame(&mut cursor, b"hello").await.unwrap();
         // 4 BE bytes for length (5) + 5 byte payload.
         assert_eq!(buf, vec![0, 0, 0, 5, b'h', b'e', b'l', b'l', b'o']);
+    }
+
+    #[test]
+    fn input_frame_size_cap_constant_matches_daemon() {
+        // Spec lock: this MUST equal agent.ReadFrame's 1 MiB ceiling.
+        // If the daemon ever raises the cap, raise this in lockstep
+        // (and re-evaluate threat model).
+        assert_eq!(MAX_INPUT_FRAME_BYTES, 1 << 20);
     }
 }

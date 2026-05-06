@@ -27,9 +27,14 @@ export interface AttachClient {
 }
 
 export interface AttachOptions {
-  /** Override the socket path. Default: ~/.tether/attach.sock */
-  socketPath?: string;
   connectTimeoutMs?: number;
+  // NOTE: there's intentionally no `socketPath` override on this
+  // interface. The frontend MUST NOT be able to point the bridge at
+  // an arbitrary Unix socket — sessionId/deviceId could otherwise
+  // leak to an attacker-controlled socket via a webview XSS or buggy
+  // composer. The Rust side resolves the path via the
+  // `TETHER_ATTACH_SOCKET` env var (operator-set) or the
+  // `$HOME/.tether/attach.sock` default.
 }
 
 /** A frame received from the daemon. We expose the raw JSON text + a
@@ -119,7 +124,13 @@ export async function subscribe(
   unlisteners.push(
     await listen<SubscribeRawStateEvent>("attach://state", (e) => {
       if (!matches(e.payload.subscriptionId)) return;
-      args.onState({ state: e.payload.state, error: e.payload.error });
+      // Tauri serde serializes `Option<String>` to either a string or
+      // `null`. Normalize to `string | undefined` so consumers can use
+      // `??` and the AttachStateEvent type stays accurate.
+      args.onState({
+        state: e.payload.state,
+        error: e.payload.error ?? undefined,
+      });
     }),
   );
 

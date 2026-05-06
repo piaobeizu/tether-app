@@ -12,12 +12,32 @@
 //
 // Stronghold needs a key-derivation closure. For the v0.1 scaffold we
 // install a placeholder that derives a 32-byte key from the input via
-// blake3-style hashing using `std::collections::hash_map::DefaultHasher`
-// — explicitly NOT production-grade. See TODO below.
+// `std::collections::hash_map::DefaultHasher` (a non-cryptographic
+// SipHash-2-4) — explicitly NOT production-grade.
+//
+// **Build-time gate**: a release build with `--features insecure-kdf`
+// disabled trips a `compile_error!` so this placeholder cannot ship
+// to end users by accident. To produce a release artifact you MUST
+// either (a) enable the `insecure-kdf` feature explicitly (CI / dev
+// builds), or (b) replace the closure with an Argon2id-based KDF and
+// remove this gate. See `Cargo.toml`'s feature declaration.
 
 mod attach;
 mod skills;
 mod wt;
+
+// Release-build guard: the Stronghold KDF below is a non-cryptographic
+// placeholder. We refuse to compile a release build unless the
+// `insecure-kdf` feature is explicitly opted into, OR the placeholder
+// has been replaced (delete this block AT THE SAME TIME you replace
+// the closure — they're a matched pair).
+#[cfg(all(not(debug_assertions), not(feature = "insecure-kdf")))]
+compile_error!(
+    "tether-app: Stronghold KDF is a non-cryptographic placeholder. \
+    Replace it with an Argon2id-based derivation before shipping a \
+    release build, or build with `--features insecure-kdf` to opt into \
+    the placeholder explicitly (dev / CI smoke only — NOT for end users)."
+);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

@@ -64,6 +64,12 @@ tauri-plugin-barcode-scanner = "2.4.4"
 default = []
 # Tauri 2 expects `custom-protocol` for production builds.
 custom-protocol = ["tauri/custom-protocol"]
+# Opt-in escape hatch for release builds while the Stronghold KDF is
+# still the non-cryptographic v0.1 placeholder. CI / smoke builds may
+# enable it; production artifacts MUST NOT (the lib.rs compile_error!
+# enforces this for default release builds). Delete this row at the
+# same time the placeholder is replaced with Argon2id.
+insecure-kdf = []
 
 [profile.release]
 panic = "abort"
