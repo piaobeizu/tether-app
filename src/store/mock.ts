@@ -10,7 +10,6 @@ import type {
   Connection,
   DagState,
   FormValues,
-  Skill,
   Workspace,
 } from "./types";
 
@@ -125,36 +124,5 @@ export const initialForm: FormValues = {
   dryRun: true,
 };
 
-export const initialSkills: Skill[] = [
-  {
-    name: "refactor.code",
-    v: "0.4.2",
-    on: true,
-    desc: "DAG-driven code restructuring",
-  },
-  {
-    name: "spec.write",
-    v: "0.2.1",
-    on: true,
-    desc: "spec writeup with structured form",
-  },
-  {
-    name: "triage.issues",
-    v: "0.1.0",
-    on: true,
-    update: "→ 0.2.0",
-    desc: "candidate issue surfacer",
-  },
-  {
-    name: "diff.review",
-    v: "0.3.0",
-    on: false,
-    desc: "interactive diff review",
-  },
-  {
-    name: "research.synth",
-    v: "0.1.5",
-    on: true,
-    desc: "media-heavy research synthesis",
-  },
-];
+// Skills moved to ./loadSkills.ts — D-20 freeze rule (spec §11.Z)
+// requires the UI fetch them via the loader, not bake them in.

@@ -15,12 +15,12 @@
 // change.
 
 import { create } from "zustand";
+import { loadSkills } from "./loadSkills";
 import {
   initialChat,
   initialConnection,
   initialDag,
   initialForm,
-  initialSkills,
   initialWorkspaces,
 } from "./mock";
 import type {
@@ -135,6 +135,10 @@ export interface Actions {
   // Settings / skills
   setSettingsTab: (tab: SettingsTab) => void;
   toggleSkill: (name: string) => void;
+  /** Internal — populated by `loadSkills()` on store creation, or by
+   *  tests that want to seed the list deterministically without
+   *  awaiting the loader. */
+  _setSkills: (skills: Skill[]) => void;
 
   // Connection
   reconnect: () => void;
@@ -226,7 +230,7 @@ function initialState(): State {
     errorBannerVisible: true,
 
     settingsTab: "skills",
-    skills: initialSkills,
+    skills: [],
 
     pairCode: "4F2-9K7",
     pairTtl: 47,
@@ -385,6 +389,10 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
       }));
     },
 
+    _setSkills: (skills) => {
+      set({ skills });
+    },
+
     reconnect: () => {
       set({
         connection: { state: "reconnecting", latency: null, attempt: 1 },
@@ -463,3 +471,22 @@ export const useTetherStore = create<Slice>()((set, get) => ({
   ...initialState(),
   ...makeActions(set, get),
 }));
+
+// Kick off the skills loader on module evaluation. Best-effort —
+// failures keep the empty list so the UI just doesn't show skills,
+// rather than crashing. Phase 9 swaps loadSkills() to a real Tauri
+// command without changing this call site.
+//
+// Skipped under test (vitest sets `import.meta.vitest`) so unit tests
+// can deterministically seed via `_setSkills` without racing the
+// resolver.
+if (typeof window !== "undefined") {
+  loadSkills()
+    .then((skills) => {
+      useTetherStore.getState()._setSkills(skills);
+    })
+    .catch(() => {
+      // Phase 9 will surface the load failure via an error banner;
+      // for v0.1 the UI just shows an empty skill list.
+    });
+}
