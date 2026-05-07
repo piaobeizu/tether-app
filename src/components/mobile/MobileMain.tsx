@@ -25,14 +25,25 @@ import {
 } from "@/blocks";
 import { Icon } from "@/blocks/Icon";
 import { useTetherStore } from "@/store";
-import type { ChatRole } from "@/store/types";
+import type { AttachState, ChatRole } from "@/store/types";
+
+function headerSubLabel(state: AttachState, skillRunning: boolean): string {
+  if (state === "connected") return skillRunning ? "live · running" : "live";
+  if (state === "connecting" || state === "backoff-pending") return "connecting…";
+  if (state === "reconnecting") return "reconnecting…";
+  if (state === "needs-pair") return "needs pair";
+  if (state === "no-daemon") return "no daemon";
+  if (state === "error") return "error";
+  return "disconnected";
+}
+
 export function MobileMain() {
   const chat = useTetherStore((s) => s.chat);
   const drawerOpen = useTetherStore((s) => s.drawerOpen);
   const mobileRoute = useTetherStore((s) => s.mobileRoute);
   const workspaces = useTetherStore((s) => s.workspaces);
   const activeWorkspace = useTetherStore((s) => s.activeWorkspace);
-  const connection = useTetherStore((s) => s.connection);
+  const attachState = useTetherStore((s) => s.attachState);
   const dag = useTetherStore((s) => s.dag);
   const sendMessage = useTetherStore((s) => s.sendMessage);
   const toggleDrawer = useTetherStore((s) => s.toggleDrawer);
@@ -207,14 +218,8 @@ export function MobileMain() {
           <div className="m-head-mid">
             <div className="m-head-title">{activeWorkspace}</div>
             <div className="m-head-sub mono">
-              <span
-                className={
-                  "dot " + (connection.state === "live" ? "live" : "")
-                }
-              />
-              {connection.state === "live"
-                ? "live · refactor running"
-                : connection.state}
+              <span className={"dot " + (attachState === "connected" ? "live" : "")} />
+              {headerSubLabel(attachState, dag.nodes.some((n) => n.status === "running"))}
             </div>
           </div>
           <button
