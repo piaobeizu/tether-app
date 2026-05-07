@@ -33,4 +33,11 @@ pub enum WtError {
     /// length-prefix, AEAD auth failure, unsupported keyVersion.
     #[error("envelope error: {0}")]
     Envelope(String),
+
+    /// Pair-protocol abort surface — the string carries the spec §3.5
+    /// `reason` enum value (e.g. `"cert-error"`, `"sas-mismatch"`,
+    /// `"replay"`). Distinct from `Envelope` so callers can map cleanly
+    /// to user-facing pair-flow UX.
+    #[error("pair: {0}")]
+    Pair(String),
 }

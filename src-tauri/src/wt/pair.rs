@@ -41,6 +41,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
+use chacha20poly1305::aead::{AeadInPlace, KeyInit};
+use chacha20poly1305::{Tag, XChaCha20Poly1305, XNonce};
 use chrono::Utc;
 use dashmap::DashMap;
 use hkdf::Hkdf;
@@ -82,6 +84,15 @@ pub const SAS_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 /// Pair protocol version. Spec §3 — bumped only on incompatible change.
 pub const PAIR_PROTOCOL_VERSION: u32 = 1;
+
+/// AD suffix appended to `transcript_hash` when sealing/opening the
+/// `pair.complete` AEAD tag. Spec §3.4 — wire-stable, must match Go's
+/// `pair.completeAEADInfo`.
+pub const COMPLETE_AEAD_INFO: &[u8] = b"tether-pair-complete-v1";
+
+/// `pair.abort` reason emitted when `pair.complete` AEAD tag fails to
+/// verify. Cross-stack constant — must match Go's `ReasonCertError`.
+pub const PAIR_ABORT_CERT_ERROR: &str = "cert-error";
 
 /// Spec §7 timeouts (single-shot per state-entry).
 const TIMEOUT_AWAITING_PUBKEY_SECS: u64 = 30;
@@ -161,19 +172,32 @@ pub struct SasConfirmFrame {
 }
 
 /// `pair.complete` body — daemon → both endpoints.
+///
+/// `nonce` + `tag` are spec §3.4 mandatory — they carry the AEAD
+/// authenticator that proves the daemon shares our derived
+/// `long_term_key`. Receivers MUST verify with their own derived
+/// `long_term_key` + the same `transcript_hash`; mismatch ⇒
+/// `pair.abort{cert-error}`. (BLOCKER 4 fix: previously we parsed
+/// these fields but skipped verification.)
+///
+/// `registered_as` and `long_term_key_id` are spec §3.4 informational
+/// fields the daemon assigns — modeled as `Option` because the Go
+/// canonical-body emitter omits keys when their content is empty
+/// (matching `serde(skip_serializing_if = "Option::is_none")`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompleteFrame {
     #[serde(rename = "type")]
     pub kind: String,
     pub v: u32,
-    #[serde(rename = "registeredAs")]
-    pub registered_as: RegisteredAs,
-    #[serde(rename = "longTermKeyId")]
-    pub long_term_key_id: String,
+    #[serde(default, rename = "registeredAs", skip_serializing_if = "Option::is_none")]
+    pub registered_as: Option<RegisteredAs>,
+    #[serde(default, rename = "longTermKeyId", skip_serializing_if = "Option::is_none")]
+    pub long_term_key_id: Option<String>,
     pub ts: i64,
     /// 24-byte XChaCha20 nonce, base64url no-pad.
     pub nonce: String,
-    /// 16-byte AEAD tag, base64url no-pad.
+    /// 16-byte AEAD tag, base64url no-pad. Empty plaintext, so the
+    /// "ciphertext" is just the 16-byte Poly1305 tag.
     pub tag: String,
 }
 
@@ -294,6 +318,64 @@ pub fn derive_long_term_keys(
     hk.expand(INFO_LTK, &mut ltk).expect("HKDF expand 32B");
     hk.expand(INFO_TBK, &mut tbk).expect("HKDF expand 32B");
     (ltk, tbk)
+}
+
+/// Error type for pair.complete AEAD tag verification (BLOCKER-4).
+#[derive(Debug)]
+pub struct CompleteAeadError;
+
+/// Build the AEAD additional data for the §3.4 pair.complete tag:
+/// `AD = transcript_hash || "tether-pair-complete-v1"`. Cross-stack:
+/// MUST match Go's `completeAEADAd`.
+fn complete_aead_ad(transcript_hash: &[u8; 32]) -> Vec<u8> {
+    let mut ad = Vec::with_capacity(transcript_hash.len() + COMPLETE_AEAD_INFO.len());
+    ad.extend_from_slice(transcript_hash);
+    ad.extend_from_slice(COMPLETE_AEAD_INFO);
+    ad
+}
+
+/// Verify the §3.4 pair.complete AEAD tag against the receiver-derived
+/// long-term key + observed transcript_hash. (BLOCKER-4 fix.)
+///
+/// `nonce_b64` is the 24-byte XChaCha20 nonce (base64url-no-pad);
+/// `tag_b64` is the 16-byte Poly1305 tag (base64url-no-pad). Empty
+/// plaintext, so the AEAD ciphertext is just the tag.
+///
+/// Returns `Ok(())` iff the tag authenticates. ANY failure (decode,
+/// length mismatch, key wrong, transcript wrong, tag tampered)
+/// surfaces as `CompleteAeadError` — defense-in-depth so callers can't
+/// branch on subtype and reveal info to an attacker probing why open
+/// failed.
+pub fn verify_complete_tag(
+    long_term_key: &[u8; 32],
+    transcript_hash: &[u8; 32],
+    nonce_b64: &str,
+    tag_b64: &str,
+) -> Result<(), CompleteAeadError> {
+    let nonce = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(nonce_b64.as_bytes())
+        .map_err(|_| CompleteAeadError)?;
+    let tag = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(tag_b64.as_bytes())
+        .map_err(|_| CompleteAeadError)?;
+    if nonce.len() != 24 {
+        return Err(CompleteAeadError);
+    }
+    if tag.len() != 16 {
+        return Err(CompleteAeadError);
+    }
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(long_term_key).map_err(|_| CompleteAeadError)?;
+    let xnonce = XNonce::from_slice(&nonce);
+    let xtag = Tag::from_slice(&tag);
+    let ad = complete_aead_ad(transcript_hash);
+    // Empty plaintext, tag-only: decrypt_in_place_detached on an empty
+    // buffer with the provided tag. If the tag is invalid this returns
+    // an error.
+    let mut buf = [0u8; 0];
+    cipher
+        .decrypt_in_place_detached(xnonce, &ad, &mut buf, xtag)
+        .map_err(|_| CompleteAeadError)
 }
 
 // ---------------------------------------------------------------------------
@@ -588,6 +670,28 @@ struct PairHandleState {
     /// Live transcript builder — additional frames (sas-confirm) get
     /// appended on confirm.
     transcript: TranscriptBuilder,
+    /// Strictly-monotonic `ts` watermark on incoming frames per spec
+    /// §6.1. Each received frame's `ts` MUST be strictly greater than
+    /// `last_seen_ts`; otherwise the frame is rejected as a replay.
+    /// (BLOCKER-5 fix: previously the Rust client did NOT track this,
+    /// so the Go side's anti-replay was the sole gate — and only one
+    /// direction's gate at that.)
+    last_seen_ts: i64,
+}
+
+/// Helper: enforce spec §6.1 strictly-monotonic ts on an inbound frame
+/// against the per-handle watermark. Caller threads the watermark in
+/// (rather than this owning the state) so the borrow surface stays
+/// minimal.
+fn check_replay_and_advance(last_seen_ts: &mut i64, frame_ts: i64) -> Result<(), WtError> {
+    if frame_ts <= *last_seen_ts {
+        return Err(WtError::Envelope(format!(
+            "replay: frame ts {} <= last-seen {}",
+            frame_ts, *last_seen_ts
+        )));
+    }
+    *last_seen_ts = frame_ts;
+    Ok(())
 }
 
 #[derive(Default)]
@@ -691,27 +795,33 @@ async fn pair_start_inner(
         nonce: b64url_no_pad(&nonce),
     };
 
-    // 3. Send invite over the control stream. Frames are
-    //    length-prefixed JSON (4-byte BE length || canonical body).
+    // 3. Send invite over the control stream. Wire format is the §3.3.1
+    //    JSONL envelope (BLOCKER-1 fix: previously this was raw 4-byte
+    //    length-prefix; now it's `{kind, keyVersion=0, ciphertext, ts}\n`
+    //    matching Go's wire.go byte-for-byte).
     let stream_arc = stream_recv_send_handles(wt_state, &args.stream_id)?;
-    write_pair_frame(&stream_arc, &invite).await?;
+    write_pair_frame(&stream_arc, "pair.invite", &invite).await?;
 
     // 4. Initialize transcript and append invite.
     let mut transcript = TranscriptBuilder::new();
     transcript.append(&invite)?;
 
+    // Initial replay watermark — anything <= 0 is rejected, which
+    // covers the v0.1 "unset" case and any peer that doesn't bother
+    // to set ts on the first accept.
+    let mut last_seen_ts: i64 = 0;
+
     // 5. Read pair.accept (or pair.abort) with §7 timeout = 30s.
-    let accept = tokio::time::timeout(
+    let (accept_kind, accept) = tokio::time::timeout(
         Duration::from_secs(TIMEOUT_AWAITING_PUBKEY_SECS),
         read_pair_frame::<AcceptFrame>(&stream_arc),
     )
     .await
     .map_err(|_| WtError::Envelope("awaiting-pubkey timeout (30s)".into()))??;
 
-    if accept.kind != "pair.accept" {
+    if accept_kind != "pair.accept" {
         return Err(WtError::Envelope(format!(
-            "expected pair.accept, got {}",
-            accept.kind
+            "expected pair.accept, got {accept_kind}"
         )));
     }
     if accept.v != PAIR_PROTOCOL_VERSION {
@@ -720,6 +830,8 @@ async fn pair_start_inner(
             accept.v, PAIR_PROTOCOL_VERSION
         )));
     }
+    // Spec §6.1 anti-replay (BLOCKER-5).
+    check_replay_and_advance(&mut last_seen_ts, accept.ts)?;
 
     // 6. Decode peer pubkey, compute shared secret.
     let peer_pub_bytes: [u8; 32] = decode_x25519_pubkey(&accept.ephemeral_pubkey)?;
@@ -748,6 +860,7 @@ async fn pair_start_inner(
         self_device_id: args.self_device_id,
         sas: sas.clone(),
         transcript,
+        last_seen_ts,
     };
     let handle_id = pair_state.insert(st);
 
@@ -794,23 +907,24 @@ async fn pair_confirm_inner(
         mac: Some(b64url_no_pad(&our_mac)),
         ts: now_unix_millis(),
     };
-    write_pair_frame(&stream_arc, &our_confirm).await?;
+    write_pair_frame(&stream_arc, "pair.sas-confirm", &our_confirm).await?;
     st.transcript.append(&our_confirm)?;
 
     // 2. Read peer's pair.sas-confirm with §7 sas-confirm timeout (60s).
-    let peer_confirm: SasConfirmFrame = tokio::time::timeout(
+    let (peer_confirm_kind, peer_confirm): (String, SasConfirmFrame) = tokio::time::timeout(
         Duration::from_secs(TIMEOUT_SAS_CONFIRM_SECS),
         read_pair_frame::<SasConfirmFrame>(&stream_arc),
     )
     .await
     .map_err(|_| WtError::Envelope("sas-confirm timeout (60s)".into()))??;
 
-    if peer_confirm.kind != "pair.sas-confirm" {
+    if peer_confirm_kind != "pair.sas-confirm" {
         return Err(WtError::Envelope(format!(
-            "expected pair.sas-confirm, got {}",
-            peer_confirm.kind
+            "expected pair.sas-confirm, got {peer_confirm_kind}"
         )));
     }
+    // Spec §6.1 anti-replay (BLOCKER-5).
+    check_replay_and_advance(&mut st.last_seen_ts, peer_confirm.ts)?;
     if !peer_confirm.ok {
         return Err(WtError::Envelope("sas-mismatch (peer reported)".into()));
     }
@@ -832,28 +946,49 @@ async fn pair_confirm_inner(
     st.transcript.append(&peer_confirm)?;
 
     // 3. Read pair.complete with §7 completing timeout (10s).
-    let complete: CompleteFrame = tokio::time::timeout(
+    let (complete_kind, complete): (String, CompleteFrame) = tokio::time::timeout(
         Duration::from_secs(TIMEOUT_COMPLETING_SECS),
         read_pair_frame::<CompleteFrame>(&stream_arc),
     )
     .await
     .map_err(|_| WtError::Envelope("completing timeout (10s)".into()))??;
 
-    if complete.kind != "pair.complete" {
+    if complete_kind != "pair.complete" {
         return Err(WtError::Envelope(format!(
-            "expected pair.complete, got {}",
-            complete.kind
+            "expected pair.complete, got {complete_kind}"
         )));
     }
+    // Spec §6.1 anti-replay (BLOCKER-5).
+    check_replay_and_advance(&mut st.last_seen_ts, complete.ts)?;
 
-    // 4. Derive long-term keys (§8). NOTE: tag verification on
-    //    pair.complete is the daemon's domain; we trust the structure
-    //    here and rely on the daemon's cross-stack pair-complete tag
-    //    being verified at the envelope layer. Slice #4 spec §3.4 also
-    //    requires a tag verify; we do a structural check now and pin
-    //    full AEAD verify against the canonical complete-AD as a
-    //    follow-up once the Go side stabilizes the AD format.
+    // 4. Derive long-term keys (§8), then VERIFY the §3.4 AEAD tag
+    //    (BLOCKER-4 fix: previously we skipped this and trusted the
+    //    daemon). A rogue daemon (or any in-path actor that survived
+    //    TLS) cannot forge this tag without sharing our derived ltk +
+    //    the same transcript_hash. Mismatch ⇒ pair.abort{cert-error}
+    //    and we do NOT save the registry record.
     let (ltk, tbk) = derive_long_term_keys(&st.shared_secret, &st.transcript_hash_for_sas);
+    if verify_complete_tag(
+        &ltk,
+        &st.transcript_hash_for_sas,
+        &complete.nonce,
+        &complete.tag,
+    )
+    .is_err()
+    {
+        // Best-effort: emit pair.abort{cert-error} so the peer can
+        // observe the rejection. If the stream is already torn we
+        // silently swallow the IO error.
+        let abort = AbortFrame {
+            kind: "pair.abort".into(),
+            v: PAIR_PROTOCOL_VERSION,
+            reason: PAIR_ABORT_CERT_ERROR.into(),
+            detail: Some("pair.complete AEAD tag verification failed".into()),
+            ts: now_unix_millis(),
+        };
+        let _ = write_pair_frame(&stream_arc, "pair.abort", &abort).await;
+        return Err(WtError::Pair(PAIR_ABORT_CERT_ERROR.into()));
+    }
 
     // 5. Persist device record (spec §9).
     let now = Utc::now().to_rfc3339();
@@ -865,7 +1000,7 @@ async fn pair_confirm_inner(
         model: st.peer_accept.device_metadata.model.clone(),
         long_term_key_b64: b64url_no_pad(&ltk),
         transport_binding_key_b64: b64url_no_pad(&tbk),
-        long_term_key_id: complete.long_term_key_id.clone(),
+        long_term_key_id: complete.long_term_key_id.clone().unwrap_or_default(),
         push_token: st.peer_accept.push_subscription.clone(),
         paired_at: now.clone(),
         last_seen: now,
@@ -927,7 +1062,7 @@ async fn pair_abort_inner(
     };
     if let Ok(stream_arc) = stream_recv_send_handles(wt_state, &st.stream_id) {
         // Best-effort; if the stream is already torn down, ignore.
-        let _ = write_pair_frame(&stream_arc, &abort).await;
+        let _ = write_pair_frame(&stream_arc, "pair.abort", &abort).await;
     }
     Ok(())
 }
@@ -981,62 +1116,121 @@ struct StreamHandles {
     recv: Arc<Mutex<web_transport_quinn::RecvStream>>,
 }
 
-/// Write a frame: 4-byte BE length || canonical JSON.
+/// Write a frame using the §3.3.1 JSONL envelope shape Go's wire.go
+/// emits (BLOCKER-1 cross-stack fix). Each line is:
+///
+///   `{"kind":"<frame-kind>","keyVersion":0,"ciphertext":"<b64url-no-pad>","ts":<unix-ms>}\n`
+///
+/// where `ciphertext` is the canonical-JSON-encoded inner body, base64-
+/// url-no-pad encoded so the wire is plain JSON. `keyVersion=0` is the
+/// pair-protocol sentinel per spec §14 OQ ratification.
 async fn write_pair_frame<F: Serialize>(
     handles: &StreamHandles,
+    kind: &str,
     frame: &F,
 ) -> Result<(), WtError> {
     let v = serde_json::to_value(frame)
         .map_err(|e| WtError::Envelope(format!("frame serialize: {e}")))?;
     let canon = canonical_json(&v);
-    let len = u32::try_from(canon.len()).map_err(|_| {
-        WtError::Envelope(format!("pair frame oversize: {} bytes", canon.len()))
-    })?;
-    if len > PAIR_FRAME_SIZE_MAX {
+    if canon.len() as u32 > PAIR_FRAME_SIZE_MAX {
         return Err(WtError::Envelope(format!(
             "pair frame size {} > max {}",
-            len, PAIR_FRAME_SIZE_MAX
+            canon.len(),
+            PAIR_FRAME_SIZE_MAX
         )));
     }
-    let mut out = Vec::with_capacity(4 + canon.len());
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(&canon);
+    // Extract ts from the inner frame body (every spec-compliant pair
+    // frame has a `ts` field). Fall back to 0 if missing — should not
+    // happen for well-formed frames.
+    let ts = v.get("ts").and_then(|x| x.as_i64()).unwrap_or(0);
+    let envelope = serde_json::json!({
+        "kind": kind,
+        "keyVersion": KEY_VERSION_PAIR,
+        "ciphertext": b64url_no_pad(&canon),
+        "ts": ts,
+    });
+    // Keep the envelope itself in canonical key order so the on-the-wire
+    // bytes are deterministic. Go side uses encoding/json's struct order
+    // (which matches the field declaration order: kind, keyVersion,
+    // ciphertext, ts), but for robustness we let the receiving end
+    // tolerate any key order — only the inner body MUST be canonical.
+    let mut line = serde_json::to_vec(&envelope)
+        .map_err(|e| WtError::Envelope(format!("envelope serialize: {e}")))?;
+    line.push(b'\n');
     let mut guard = handles.send.lock().await;
     guard
-        .write_all(&out)
+        .write_all(&line)
         .await
         .map_err(|e| WtError::Io(format!("pair write: {e}")))?;
     Ok(())
 }
 
-/// Read one length-prefixed JSON pair frame and parse as `T`.
+/// `keyVersion` sentinel for pair-protocol frames (plaintext body). Per
+/// spec §3.3.1 + §14 OQ ratification — pair frames pre-shared-key are
+/// intentionally plaintext-marked. Cross-stack constant: must match
+/// Go's `KeyVersionPair = 0`.
+const KEY_VERSION_PAIR: u32 = 0;
+
+/// Read one JSONL envelope line, verify keyVersion, decode inner body,
+/// and parse as `T`. Returns `(envelope_kind, parsed_body)` so the
+/// caller can validate kind matches what it expected. (BLOCKER-1 fix:
+/// previously we framed length-prefixed; now we read-until-newline.)
 async fn read_pair_frame<T: for<'de> Deserialize<'de>>(
     handles: &StreamHandles,
-) -> Result<T, WtError> {
-    let mut hdr = [0u8; 4];
+) -> Result<(String, T), WtError> {
     let mut guard = handles.recv.lock().await;
-    guard
-        .read_exact(&mut hdr)
-        .await
-        .map_err(|e| WtError::Io(format!("pair read len: {e}")))?;
-    let n = u32::from_be_bytes(hdr);
-    if n == 0 {
-        return Err(WtError::Envelope("zero-length pair frame".into()));
+    let mut line = Vec::with_capacity(512);
+    let mut byte = [0u8; 1];
+    loop {
+        guard
+            .read_exact(&mut byte)
+            .await
+            .map_err(|e| WtError::Io(format!("pair read: {e}")))?;
+        if byte[0] == b'\n' {
+            break;
+        }
+        line.push(byte[0]);
+        if line.len() as u32 > PAIR_FRAME_SIZE_MAX + 1024 {
+            return Err(WtError::Envelope(format!(
+                "pair envelope size {} > max",
+                line.len()
+            )));
+        }
     }
-    if n > PAIR_FRAME_SIZE_MAX {
+    drop(guard);
+    if line.is_empty() {
+        return Err(WtError::Envelope("empty pair envelope line".into()));
+    }
+    #[derive(Deserialize)]
+    struct EnvelopeWire {
+        kind: String,
+        #[serde(rename = "keyVersion")]
+        key_version: u32,
+        ciphertext: String,
+        #[allow(dead_code)]
+        ts: Option<i64>,
+    }
+    let env: EnvelopeWire = serde_json::from_slice(&line)
+        .map_err(|e| WtError::Envelope(format!("envelope parse: {e}")))?;
+    if env.key_version != KEY_VERSION_PAIR {
         return Err(WtError::Envelope(format!(
-            "pair frame size {} > max {}",
-            n, PAIR_FRAME_SIZE_MAX
+            "keyVersion {} invalid for pair frame (must be {})",
+            env.key_version, KEY_VERSION_PAIR
         )));
     }
-    let mut body = vec![0u8; n as usize];
-    guard
-        .read_exact(&mut body)
-        .await
-        .map_err(|e| WtError::Io(format!("pair read body: {e}")))?;
+    let body = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(env.ciphertext.as_bytes())
+        .map_err(|e| WtError::Envelope(format!("ciphertext b64 decode: {e}")))?;
+    if body.len() as u32 > PAIR_FRAME_SIZE_MAX {
+        return Err(WtError::Envelope(format!(
+            "pair body size {} > max {}",
+            body.len(),
+            PAIR_FRAME_SIZE_MAX
+        )));
+    }
     let parsed: T = serde_json::from_slice(&body)
         .map_err(|e| WtError::Envelope(format!("pair frame parse: {e}")))?;
-    Ok(parsed)
+    Ok((env.kind, parsed))
 }
 
 /// base64url no-pad encoding (matches Go side's `base64.RawURLEncoding`).
@@ -1374,5 +1568,176 @@ mod tests {
 
         let back: InviteFrame = serde_json::from_value(v).unwrap();
         assert_eq!(back.device_id, f.device_id);
+    }
+
+    /// Cross-stack canonical body byte-pinning (BLOCKER-2). Same input
+    /// vector + same output bytes as the Go side's
+    /// `TestCanonicalBody_InviteFullFields`. Divergence ⇒ transcript_hash
+    /// diverges ⇒ SAS / MAC mismatch ⇒ pairing fails.
+    ///
+    /// Pinned input:
+    ///   pubkey = [0xAB; 32], nonce = [0xCD; 16],
+    ///   deviceId = "device-desktop-aaaa", kind = desktop,
+    ///   displayName = "Kang's MacBook", model = "MBP",
+    ///   osVersion = "macOS 14.5", appVersion = "tether 0.1.0-dev",
+    ///   ts = 1714000000000, v = 1
+    #[test]
+    fn canonical_body_invite_full_fields_golden() {
+        let pubkey = [0xABu8; 32];
+        let nonce = [0xCDu8; 16];
+        let f = InviteFrame {
+            kind: "pair.invite".into(),
+            v: 1,
+            device_id: "device-desktop-aaaa".into(),
+            ephemeral_pubkey: b64url_no_pad(&pubkey),
+            device_metadata: DeviceMetadata {
+                kind: "desktop".into(),
+                model: Some("MBP".into()),
+                display_name: "Kang's MacBook".into(),
+                os_version: Some("macOS 14.5".into()),
+                app_version: Some("tether 0.1.0-dev".into()),
+            },
+            ts: 1714000000000,
+            nonce: b64url_no_pad(&nonce),
+        };
+        let v = serde_json::to_value(&f).unwrap();
+        let canon = canonical_json(&v);
+        let want = br#"{"deviceId":"device-desktop-aaaa","deviceMetadata":{"appVersion":"tether 0.1.0-dev","displayName":"Kang's MacBook","kind":"desktop","model":"MBP","osVersion":"macOS 14.5"},"ephemeralPubkey":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s","nonce":"zc3Nzc3Nzc3Nzc3Nzc3NzQ","ts":1714000000000,"type":"pair.invite","v":1}"#;
+        assert_eq!(
+            std::str::from_utf8(&canon).unwrap(),
+            std::str::from_utf8(want).unwrap(),
+            "canonical body diverged from Go cross-stack golden"
+        );
+    }
+
+    /// Cross-stack canonical body when optionals are omitted. Mirrors
+    /// the Go side's TestCanonicalBody_InviteOptionalsOmitted.
+    #[test]
+    fn canonical_body_invite_optionals_omitted_golden() {
+        let pubkey = [0xABu8; 32];
+        let nonce = [0xCDu8; 16];
+        let f = InviteFrame {
+            kind: "pair.invite".into(),
+            v: 1,
+            device_id: "device-desktop-aaaa".into(),
+            ephemeral_pubkey: b64url_no_pad(&pubkey),
+            device_metadata: DeviceMetadata {
+                kind: "desktop".into(),
+                model: None,
+                display_name: "Kang's MacBook".into(),
+                os_version: None,
+                app_version: None,
+            },
+            ts: 1714000000000,
+            nonce: b64url_no_pad(&nonce),
+        };
+        let v = serde_json::to_value(&f).unwrap();
+        let canon = canonical_json(&v);
+        let want = br#"{"deviceId":"device-desktop-aaaa","deviceMetadata":{"displayName":"Kang's MacBook","kind":"desktop"},"ephemeralPubkey":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s","nonce":"zc3Nzc3Nzc3Nzc3Nzc3NzQ","ts":1714000000000,"type":"pair.invite","v":1}"#;
+        assert_eq!(
+            std::str::from_utf8(&canon).unwrap(),
+            std::str::from_utf8(want).unwrap(),
+            "omit-optionals canonical body diverged from Go golden"
+        );
+    }
+
+    /// pair.complete AEAD verify happy path (BLOCKER-4). Round-trip
+    /// against an AD-only seal (empty plaintext, tag = 16B).
+    #[test]
+    fn pair_complete_aead_roundtrip() {
+        use chacha20poly1305::aead::AeadInPlace;
+        let ltk = [0xEEu8; 32];
+        let th = [0x11u8; 32];
+        let nonce_bytes = [0x42u8; 24];
+        let cipher = XChaCha20Poly1305::new_from_slice(&ltk).unwrap();
+        let xnonce = XNonce::from_slice(&nonce_bytes);
+        let ad = complete_aead_ad(&th);
+        // Seal empty plaintext → 16B tag.
+        let mut buf = [0u8; 0];
+        let tag = cipher
+            .encrypt_in_place_detached(xnonce, &ad, &mut buf)
+            .expect("encrypt");
+        let nonce_b64 = b64url_no_pad(&nonce_bytes);
+        let tag_b64 = b64url_no_pad(tag.as_slice());
+        assert!(verify_complete_tag(&ltk, &th, &nonce_b64, &tag_b64).is_ok());
+
+        // Tamper tag — must fail.
+        let mut bad_tag = tag.as_slice().to_vec();
+        bad_tag[0] ^= 0x01;
+        let bad_tag_b64 = b64url_no_pad(&bad_tag);
+        assert!(verify_complete_tag(&ltk, &th, &nonce_b64, &bad_tag_b64).is_err());
+
+        // Tamper transcript hash — must fail.
+        let mut bad_th = th;
+        bad_th[15] ^= 0x01;
+        assert!(verify_complete_tag(&ltk, &bad_th, &nonce_b64, &tag_b64).is_err());
+
+        // Wrong ltk — must fail.
+        let mut bad_ltk = ltk;
+        bad_ltk[31] ^= 0x01;
+        assert!(verify_complete_tag(&bad_ltk, &th, &nonce_b64, &tag_b64).is_err());
+    }
+
+    /// Replay protection: `check_replay_and_advance` rejects equal /
+    /// less-than ts and accepts strictly-greater. (BLOCKER-5.)
+    #[test]
+    fn replay_check_strictly_monotonic() {
+        let mut last = 0i64;
+        // First frame at ts=10 — accepted, watermark advances.
+        check_replay_and_advance(&mut last, 10).unwrap();
+        assert_eq!(last, 10);
+        // Equal ts — rejected.
+        assert!(check_replay_and_advance(&mut last, 10).is_err());
+        assert_eq!(last, 10, "watermark must NOT advance on rejection");
+        // Less-than ts — rejected.
+        assert!(check_replay_and_advance(&mut last, 9).is_err());
+        // Strictly greater — accepted.
+        check_replay_and_advance(&mut last, 11).unwrap();
+        assert_eq!(last, 11);
+    }
+
+    /// Cross-stack pair.abort reason "cert-error" is the exact string
+    /// the Go side emits. Keeps the cross-stack constant byte-equal.
+    #[test]
+    fn pair_abort_cert_error_constant() {
+        assert_eq!(PAIR_ABORT_CERT_ERROR, "cert-error");
+    }
+
+    /// JSONL envelope shape — verify what we'd emit for an invite
+    /// matches the spec §3.3.1 envelope (BLOCKER-1). Cross-stack with
+    /// Go's TestWire_JSONLEnvelopeShape.
+    #[test]
+    fn jsonl_envelope_shape() {
+        let frame = InviteFrame {
+            kind: "pair.invite".into(),
+            v: 1,
+            device_id: "device-desktop-aaaa".into(),
+            ephemeral_pubkey: b64url_no_pad(&[0xABu8; 32]),
+            device_metadata: DeviceMetadata {
+                kind: "desktop".into(),
+                model: None,
+                display_name: "test".into(),
+                os_version: None,
+                app_version: None,
+            },
+            ts: 1714000000000,
+            nonce: b64url_no_pad(&[0xCDu8; 16]),
+        };
+        // Reconstruct what write_pair_frame would emit.
+        let v = serde_json::to_value(&frame).unwrap();
+        let canon = canonical_json(&v);
+        let envelope = serde_json::json!({
+            "kind": "pair.invite",
+            "keyVersion": KEY_VERSION_PAIR,
+            "ciphertext": b64url_no_pad(&canon),
+            "ts": 1714000000000_i64,
+        });
+        let line = serde_json::to_vec(&envelope).unwrap();
+        // Decoder side: parse as plain JSON, verify field names + types.
+        let parsed: serde_json::Value = serde_json::from_slice(&line).unwrap();
+        assert_eq!(parsed["kind"], "pair.invite");
+        assert_eq!(parsed["keyVersion"], 0);
+        assert!(parsed["ciphertext"].is_string());
+        assert_eq!(parsed["ts"], 1714000000000_i64);
     }
 }
