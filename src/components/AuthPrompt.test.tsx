@@ -1,34 +1,29 @@
 // AuthPrompt — unit tests for the modal dialog. Exercises:
 //   - hidden when no pending request
 //   - renders tool name + summary + four buttons
-//   - clicking "allow once" sends the right decision frame via sendInput
-//   - clicking "deny always" sends the right decision frame
+//   - clicking "allow once" calls the sender with the right decision frame
+//   - clicking "deny always" calls the sender with the right decision frame
 //   - clears the pending request after a click
-//   - buttons are disabled when subscription is null
+//   - buttons are disabled when sender is null
+//
+// Slice #5 / D-21: AuthPrompt now takes a transport-agnostic
+// `InputSender` callback instead of a UDS attach subscription. The
+// daemon is reached over WebTransport in the live app; this test
+// stubs the sender function directly.
 
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { act } from "react";
 
-import type { AttachSubscription } from "@/transport/attach";
-
-vi.mock("@/transport/attach", () => {
-  return {
-    sendInput: vi.fn(),
-  };
-});
-
 // eslint-disable-next-line import/first
-import { AuthPrompt } from "./AuthPrompt";
+import { AuthPrompt, type InputSender } from "./AuthPrompt";
 // eslint-disable-next-line import/first
 import { useTetherStore } from "@/store";
-// eslint-disable-next-line import/first
-import * as transport from "@/transport/attach";
 
-const sendInputMock = transport.sendInput as ReturnType<typeof vi.fn>;
+type SenderMock = ReturnType<typeof vi.fn> & InputSender;
 
-function fakeSub(): AttachSubscription {
-  return { id: "fake-1", dispose: vi.fn(async () => {}) };
+function makeSender(): SenderMock {
+  return vi.fn(async (_bytes: Uint8Array) => {}) as unknown as SenderMock;
 }
 
 function decodeSentDecision(callArg: Uint8Array): unknown {
@@ -37,8 +32,6 @@ function decodeSentDecision(callArg: Uint8Array): unknown {
 
 describe("AuthPrompt", () => {
   beforeEach(() => {
-    sendInputMock.mockReset();
-    sendInputMock.mockResolvedValue(undefined);
     useTetherStore.setState({
       pendingAuthRequest: null,
       authRequestQueue: [],
@@ -52,7 +45,7 @@ describe("AuthPrompt", () => {
   });
 
   it("renders nothing when no pending request", () => {
-    const { container } = render(<AuthPrompt subscription={fakeSub()} />);
+    const { container } = render(<AuthPrompt sender={makeSender()} />);
     expect(container.firstChild).toBeNull();
   });
 
@@ -66,7 +59,7 @@ describe("AuthPrompt", () => {
         sessionId: "sid-1",
       },
     });
-    render(<AuthPrompt subscription={fakeSub()} />);
+    render(<AuthPrompt sender={makeSender()} />);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /Allow tool: Bash/i }),
@@ -96,16 +89,15 @@ describe("AuthPrompt", () => {
         sessionId: "sid-1",
       },
     });
-    const sub = fakeSub();
-    render(<AuthPrompt subscription={sub} />);
+    const sender = makeSender();
+    render(<AuthPrompt sender={sender} />);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
     });
 
-    expect(sendInputMock).toHaveBeenCalledTimes(1);
-    const [calledSub, payload] = sendInputMock.mock.calls[0]!;
-    expect(calledSub).toBe(sub);
+    expect(sender).toHaveBeenCalledTimes(1);
+    const [payload] = sender.mock.calls[0]!;
     expect(decodeSentDecision(payload as Uint8Array)).toEqual({
       type: "auth.tool-decision",
       requestId: "auth-abc",
@@ -125,15 +117,16 @@ describe("AuthPrompt", () => {
         sessionId: "sid-1",
       },
     });
-    render(<AuthPrompt subscription={fakeSub()} />);
+    const sender = makeSender();
+    render(<AuthPrompt sender={sender} />);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /deny always/i }));
     });
 
-    expect(sendInputMock).toHaveBeenCalledTimes(1);
+    expect(sender).toHaveBeenCalledTimes(1);
     expect(
-      decodeSentDecision(sendInputMock.mock.calls[0]![1] as Uint8Array),
+      decodeSentDecision(sender.mock.calls[0]![0] as Uint8Array),
     ).toEqual({
       type: "auth.tool-decision",
       requestId: "auth-deny",
@@ -141,7 +134,7 @@ describe("AuthPrompt", () => {
     });
   });
 
-  it("disables buttons when subscription is null", () => {
+  it("disables buttons when sender is null", () => {
     useTetherStore.setState({
       pendingAuthRequest: {
         requestId: "auth-x",
@@ -151,7 +144,7 @@ describe("AuthPrompt", () => {
         sessionId: "sid-1",
       },
     });
-    render(<AuthPrompt subscription={null} />);
+    render(<AuthPrompt sender={null} />);
     const btn = screen.getByRole("button", { name: /allow once/i });
     expect(btn).toBeDisabled();
     expect(screen.getByText(/attach socket is not in rw mode/i)).toBeInTheDocument();
@@ -176,7 +169,7 @@ describe("AuthPrompt", () => {
         },
       ],
     });
-    render(<AuthPrompt subscription={fakeSub()} />);
+    render(<AuthPrompt sender={makeSender()} />);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
     });
@@ -185,8 +178,10 @@ describe("AuthPrompt", () => {
     expect(s.authRequestQueue).toHaveLength(0);
   });
 
-  it("surfaces sendInput failure as an attach error but still clears the prompt", async () => {
-    sendInputMock.mockRejectedValueOnce(new Error("ipc broken"));
+  it("surfaces sender failure as an attach error but still clears the prompt", async () => {
+    const sender = vi.fn(async () => {
+      throw new Error("ipc broken");
+    });
     useTetherStore.setState({
       pendingAuthRequest: {
         requestId: "auth-fail",
@@ -196,7 +191,7 @@ describe("AuthPrompt", () => {
         sessionId: "sid-1",
       },
     });
-    render(<AuthPrompt subscription={fakeSub()} />);
+    render(<AuthPrompt sender={sender} />);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
     });

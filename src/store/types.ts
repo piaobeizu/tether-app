@@ -18,8 +18,14 @@ export type WtState = "live" | "reconnecting";
  *  State semantics — note the deliberate split between auto-retry and
  *  manual-retry so callers reading the store don't conflate them:
  *  - `idle`            — no sessionId set, or bridge has not run yet.
- *  - `connecting`      — opening the socket (Rust-side `connecting` event).
- *  - `connected`       — `attach.ack` received, frame loop running.
+ *  - `needs-pair`      — no paired device record on disk; the user must
+ *                        complete the pair flow (§11.AB) before WT can
+ *                        run. Settles into a "Pair new device" CTA in
+ *                        Settings rather than retrying.
+ *  - `connecting`      — opening the WT session (TLS + handshake +
+ *                        SessionIDHeader on control channel-id 0x01).
+ *  - `connected`       — events stream on channel-id 0x02 is pumping
+ *                        envelopes; the bridge is healthy.
  *  - `backoff-pending` — bridge is internally waiting out the 2s
  *                        auto-retry backoff after a transient drop /
  *                        error. Subsequent `connecting` transition is
@@ -36,6 +42,7 @@ export type WtState = "live" | "reconnecting";
  *                        reconnect to resume. */
 export type AttachState =
   | "idle"
+  | "needs-pair"
   | "connecting"
   | "connected"
   | "backoff-pending"

@@ -46,6 +46,14 @@ import type {
 
 const THEME_STORAGE_KEY = "tether.theme";
 const ATTACH_SID_STORAGE_KEY = "tether.attach.sessionId";
+const DAEMON_URL_STORAGE_KEY = "tether.daemon.url";
+const PINNED_CERT_STORAGE_KEY = "tether.daemon.pinnedCertSha256";
+
+/** Default daemon URL for v0.1 single-user same-machine bring-up. The
+ *  daemon binds to `localhost:4444` for the dev WT listener (see
+ *  `tether daemon -v` startup log). Operators on a remote daemon
+ *  override this in Settings → Connection. */
+export const DEFAULT_DAEMON_URL = "https://localhost:4444";
 
 /** Tauri runtime detection — `__TAURI_INTERNALS__` is injected by the
  *  Tauri 2 runtime into `window` before user code runs. Used to gate the
@@ -111,6 +119,68 @@ function writePersistedAttachSessionId(sid: string): void {
       window.localStorage.removeItem(ATTACH_SID_STORAGE_KEY);
     } else {
       window.localStorage.setItem(ATTACH_SID_STORAGE_KEY, sid);
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+function readPersistedDaemonUrl(): string {
+  if (typeof window !== "undefined") {
+    try {
+      const v = window.localStorage.getItem(DAEMON_URL_STORAGE_KEY);
+      if (v) return v;
+    } catch {
+      /* localStorage may be disabled */
+    }
+  }
+  // VITE_TETHER_DAEMON_URL allows dev iteration to point at a non-default
+  // daemon URL via .env.local without touching the UI.
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> })
+    .env;
+  if (env && typeof env.VITE_TETHER_DAEMON_URL === "string" && env.VITE_TETHER_DAEMON_URL) {
+    return env.VITE_TETHER_DAEMON_URL;
+  }
+  return DEFAULT_DAEMON_URL;
+}
+
+function writePersistedDaemonUrl(url: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (url === "" || url === DEFAULT_DAEMON_URL) {
+      window.localStorage.removeItem(DAEMON_URL_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(DAEMON_URL_STORAGE_KEY, url);
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+function readPersistedPinnedCert(): string {
+  if (typeof window !== "undefined") {
+    try {
+      const v = window.localStorage.getItem(PINNED_CERT_STORAGE_KEY);
+      if (v) return v;
+    } catch {
+      /* localStorage may be disabled */
+    }
+  }
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> })
+    .env;
+  if (env && typeof env.VITE_TETHER_PINNED_CERT === "string" && env.VITE_TETHER_PINNED_CERT) {
+    return env.VITE_TETHER_PINNED_CERT;
+  }
+  return "";
+}
+
+function writePersistedPinnedCert(hex: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (hex === "") {
+      window.localStorage.removeItem(PINNED_CERT_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(PINNED_CERT_STORAGE_KEY, hex);
     }
   } catch {
     /* best effort */
@@ -196,10 +266,18 @@ export interface State {
   // the `data-theme` attribute on the AppShell root.
   theme: Theme;
 
-  // Local-daemon attach bridge (Phase 9). The sessionId is persisted
-  // to localStorage so reopening the app reattaches to the same cc
-  // session. State is set by the AttachBridge effect in AppShell.
+  // Cross-network attach bridge (WT slice #5 / D-21). The sessionId +
+  // daemonUrl + pinnedCertSha256 are persisted to localStorage so
+  // reopening the app reattaches to the same cc session against the
+  // same daemon. State is set by the AttachBridge effect in AppShell.
   attachSessionId: string;
+  /** Daemon WT URL — e.g. `https://localhost:4444`. Default in
+   *  `DEFAULT_DAEMON_URL`; user can override in Settings → Connection. */
+  daemonUrl: string;
+  /** Hex-encoded sha256 of the daemon's DER-encoded x509 leaf cert.
+   *  Empty string means "use OS trust store". Operator copies this
+   *  from `tether daemon -v` startup line `dev cert DER sha256: <hex>`. */
+  pinnedCertSha256: string;
   attachState: AttachState;
   /** Last error string surfaced from the attach bridge — used by the
    *  Settings → connection panel; reset on a successful reconnect. */
@@ -285,8 +363,10 @@ export interface Actions {
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
 
-  // Attach bridge (Phase 9)
+  // Attach bridge (Phase 9; WT cutover in slice #5 / D-21)
   setAttachSessionId: (sessionId: string) => void;
+  setDaemonUrl: (url: string) => void;
+  setPinnedCertSha256: (hex: string) => void;
   setAttachState: (state: AttachState, error?: string | null) => void;
   triggerAttachReconnect: () => void;
 
@@ -420,6 +500,8 @@ function initialState(): State {
     theme: readPersistedTheme(),
 
     attachSessionId: readPersistedAttachSessionId(),
+    daemonUrl: readPersistedDaemonUrl(),
+    pinnedCertSha256: readPersistedPinnedCert(),
     attachState: "idle",
     attachError: null,
     attachReconnectAttempt: 0,
@@ -774,6 +856,18 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
     setAttachSessionId: (sessionId) => {
       writePersistedAttachSessionId(sessionId);
       set({ attachSessionId: sessionId });
+    },
+
+    setDaemonUrl: (url) => {
+      writePersistedDaemonUrl(url);
+      set({ daemonUrl: url || DEFAULT_DAEMON_URL });
+    },
+
+    setPinnedCertSha256: (hex) => {
+      // Store the hex verbatim — the WT layer accepts both bare and
+      // colon-separated forms. Empty string = use OS trust store.
+      writePersistedPinnedCert(hex);
+      set({ pinnedCertSha256: hex });
     },
 
     setAttachState: (state, error = null) => {
