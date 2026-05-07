@@ -216,6 +216,47 @@ describe("AttachBridge — reconnect lifecycle", () => {
     await vi.waitFor(() => expect(subs.length).toBe(7));
   });
 
+  it("M2: pairListDevices throw is surfaced as 'error' state, not 'needs-pair'", async () => {
+    // Pre-fix, AttachBridge mapped (a) Tauri runtime missing, (b) empty
+    // list, (c) pairListDevices throwing ALL to needs-pair "no paired
+    // devices". A transient Tauri-bridge error therefore lied to the
+    // user — they'd be told to re-pair when their pairing was fine.
+    const subs = makeConnectStub();
+    const pairTransport = await import("@/transport/pair");
+    const listMock = pairTransport.pairListDevices as ReturnType<typeof vi.fn>;
+    listMock.mockRejectedValueOnce(new Error("boom: invoke unavailable"));
+
+    setSession("sid-tauri-error");
+    render(<AttachBridge />);
+
+    await vi.runOnlyPendingTimersAsync();
+    await vi.waitFor(() => {
+      const s = useTetherStore.getState();
+      expect(s.attachState).toBe("error");
+    });
+    const s = useTetherStore.getState();
+    expect(s.attachError).toMatch(/Tauri runtime unavailable/);
+    expect(s.attachError).toMatch(/boom: invoke unavailable/);
+    // No WT connect should have been attempted.
+    expect(subs.length).toBe(0);
+  });
+
+  it("M2: pairListDevices empty array still maps to 'needs-pair'", async () => {
+    const subs = makeConnectStub();
+    const pairTransport = await import("@/transport/pair");
+    const listMock = pairTransport.pairListDevices as ReturnType<typeof vi.fn>;
+    listMock.mockResolvedValueOnce([]);
+
+    setSession("sid-empty-pair");
+    render(<AttachBridge />);
+
+    await vi.runOnlyPendingTimersAsync();
+    await vi.waitFor(() => {
+      expect(useTetherStore.getState().attachState).toBe("needs-pair");
+    });
+    expect(subs.length).toBe(0);
+  });
+
   it("dispose() runs on unmount before any in-flight retry fires", async () => {
     const subs = makeConnectStub();
     setSession("sid-4");

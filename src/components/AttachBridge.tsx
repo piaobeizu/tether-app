@@ -44,22 +44,46 @@ import type { ChatMessage } from "@/store/types";
 const RECONNECT_BACKOFF_MS = 2000;
 const MAX_RECONNECTS = 5;
 
+/** Discriminated result of resolving the device id this app should
+ *  advertise on the SessionIDHeader. M2 — pre-fix this function
+ *  returned `null` for three distinct conditions (Tauri runtime
+ *  missing, pair list empty, pairListDevices threw transiently), and
+ *  the caller mapped all three to `needs-pair "no paired devices"`.
+ *  That misled the user when the underlying cause was actually a
+ *  transient Tauri-bridge error. Discriminating the three states lets
+ *  AttachBridge surface a more accurate banner. */
+type DeviceResolution =
+  | { kind: "ok"; deviceId: string }
+  | { kind: "no-devices" }
+  | { kind: "tauri-error"; message: string };
+
 /** Pick the device id this app should advertise on the SessionIDHeader.
  *  v0.1 single-user (D-04) → just the first paired record's deviceId.
- *  When the registry returns empty, the caller stops in `needs-pair`
- *  state; this function returns `null` in that case so the caller can
- *  branch without re-running the call. */
-async function pickPairedDeviceId(): Promise<string | null> {
+ *  Returns a discriminated result so the caller can show a precise
+ *  banner (M2): `tauri-error` for an environment / Tauri-bridge fault,
+ *  `no-devices` for an empty registry, `ok` otherwise. */
+async function pickPairedDeviceId(): Promise<DeviceResolution> {
   try {
     const list = await pairListDevices();
-    if (!Array.isArray(list) || list.length === 0) return null;
+    if (!Array.isArray(list)) {
+      return {
+        kind: "tauri-error",
+        message: `pair_list_devices returned non-array: ${typeof list}`,
+      };
+    }
+    if (list.length === 0) return { kind: "no-devices" };
     const first = list[0];
-    return first?.deviceId ?? null;
-  } catch {
-    // Tauri runtime missing (vitest happy-dom without invoke mock) →
-    // treat as "no paired devices yet". Tests that want WT to actually
-    // fire mock the pair_list_devices invoke.
-    return null;
+    const deviceId = first?.deviceId;
+    if (typeof deviceId !== "string" || deviceId.length === 0) {
+      return {
+        kind: "tauri-error",
+        message: "pair_list_devices first record missing deviceId",
+      };
+    }
+    return { kind: "ok", deviceId };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { kind: "tauri-error", message };
   }
 }
 
@@ -100,19 +124,35 @@ export function AttachBridge() {
       if (cancelled || myGen !== genRef.current) return;
 
       // Resolve the device id from the local pair registry BEFORE we
-      // open WT — if no devices are paired, we stop in `needs-pair`
-      // state. Reconnect / "I just paired" flow goes through the
-      // manual triggerAttachReconnect() path, which re-runs this
-      // effect.
-      const deviceId = await pickPairedDeviceId();
+      // open WT. M2: distinguish the three failure modes so the UI
+      // banner accurately reflects the underlying cause:
+      //
+      //   - `tauri-error` → environment / Tauri-bridge fault. Surface
+      //     as `error` state so the user sees a "try restarting the
+      //     app" hint instead of being told to pair (which they may
+      //     already have done).
+      //   - `no-devices` → genuine empty registry → `needs-pair`.
+      //   - `ok` → proceed with WT connect.
+      //
+      // The reconnect / "I just paired" flow comes through the manual
+      // triggerAttachReconnect() path, which re-runs this effect (C2).
+      const resolved = await pickPairedDeviceId();
       if (cancelled || myGen !== genRef.current) return;
-      if (deviceId === null) {
+      if (resolved.kind === "tauri-error") {
+        setAttachState(
+          "error",
+          `Tauri runtime unavailable — try restarting the app (${resolved.message})`,
+        );
+        return;
+      }
+      if (resolved.kind === "no-devices") {
         setAttachState(
           "needs-pair",
           "no paired devices — pair first from Settings → Connection",
         );
         return;
       }
+      const deviceId = resolved.deviceId;
 
       try {
         const client = await connectWtAttach({

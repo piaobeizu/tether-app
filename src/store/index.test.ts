@@ -155,6 +155,48 @@ describe("useTetherStore", () => {
     expect(useTetherStore.getState().pairMobileStep).toBe("scan");
   });
 
+  // C2 regression: confirmPair must bump attachReconnectAttempt on
+  // success so AttachBridge's effect re-runs pickPairedDeviceId() and
+  // exits the sticky `needs-pair` state. Pre-fix, the bridge stayed
+  // in `needs-pair` forever even after the user successfully paired
+  // because the reconnect counter never moved.
+  it("confirmPair bumps attachReconnectAttempt on Tauri-backed success (C2)", async () => {
+    reset();
+    vi.useRealTimers();
+
+    // Mock Tauri runtime + pair transport so confirmPair takes the
+    // success branch. The transport module is dynamically imported
+    // inside confirmPair, so vi.mock must patch the module path.
+    const winRef = window as unknown as {
+      __TAURI_INTERNALS__?: unknown;
+    };
+    const prevTauri = winRef.__TAURI_INTERNALS__;
+    winRef.__TAURI_INTERNALS__ = {};
+
+    vi.doMock("@/transport/pair", () => ({
+      pairConfirm: vi.fn(async () => undefined),
+      pairAbort: vi.fn(async () => undefined),
+      pairListDevices: vi.fn(async () => []),
+    }));
+
+    try {
+      useTetherStore.setState({ pairHandleId: "h-test", attachReconnectAttempt: 0 });
+      const before = useTetherStore.getState().attachReconnectAttempt;
+      await useTetherStore.getState().confirmPair();
+      const after = useTetherStore.getState();
+      expect(after.attachReconnectAttempt).toBe(before + 1);
+      expect(after.pairHandleId).toBeNull();
+      expect(after.pairError).toBeNull();
+    } finally {
+      vi.doUnmock("@/transport/pair");
+      if (prevTauri === undefined) {
+        delete winRef.__TAURI_INTERNALS__;
+      } else {
+        winRef.__TAURI_INTERNALS__ = prevTauri;
+      }
+    }
+  });
+
   it("toggleTheme flips light ↔ dark and persists to localStorage", () => {
     reset();
     useTetherStore.setState({ theme: "light" });
