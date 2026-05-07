@@ -6,14 +6,34 @@
 
 import type { ReactNode } from "react";
 import { Icon } from "@/blocks/Icon";
+import type { ChatRole } from "@/store/types";
 
 interface MsgProps {
-  from: "user" | "ai";
+  from: ChatRole;
   time: string;
   children: ReactNode;
 }
 
 export function Msg({ from, time, children }: MsgProps) {
+  if (from === "system") {
+    // Ambient/info row — used by hook-event echoes, "connected" notices,
+    // reload markers. Muted styling, no avatar, full-width.
+    return (
+      <div
+        style={{
+          fontSize: 12,
+          color: "var(--ink-tertiary)",
+          fontStyle: "italic",
+          padding: "4px 0",
+        }}
+      >
+        <span className="mono" style={{ marginRight: 8 }}>
+          {time}
+        </span>
+        {children}
+      </div>
+    );
+  }
   if (from === "user") {
     return (
       <div

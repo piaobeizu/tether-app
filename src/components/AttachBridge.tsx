@@ -20,7 +20,15 @@ import { useEffect, useRef, useState } from "react";
 import { useTetherStore } from "@/store";
 import { subscribe, type AttachSubscription } from "@/transport/attach";
 import { isAuthToolRequest } from "@/transport/auth";
+import {
+  decodePayload,
+  EnvelopeKind,
+  extractAgentRole,
+  extractAgentText,
+  type LocalEnvelope,
+} from "@/transport/envelope";
 import { AuthPrompt } from "@/components/AuthPrompt";
+import type { ChatMessage } from "@/store/types";
 
 const RECONNECT_BACKOFF_MS = 2000;
 const MAX_RECONNECTS = 5;
@@ -182,10 +190,18 @@ export function AttachBridge() {
 }
 
 /**
- * Handle a single attach frame body. v0.1: classifies the frame type
- * for the connection-state machine + dispatches auth.tool-request
- * envelopes into the auth-prompt slice. Phase 10 will route the rest
- * of the LocalEnvelope kinds into chat / DAG.
+ * Handle a single attach frame body. Three responsibilities, in
+ * priority order:
+ *
+ *   1. **Connection-state frames** — `attach.lock-denied` / `attach.ack`.
+ *      These have a top-level `type` field (NOT `kind`) and are
+ *      handled before the LocalEnvelope branch.
+ *   2. **Auth prompts** — `auth.tool-request` envelopes are routed
+ *      into the auth-prompt slice for <AuthPrompt /> to render.
+ *   3. **LocalEnvelope dispatch** (Phase 10) — `output.agent-event` →
+ *      ChatMessage{from:"ai"}, `output.hook-event` →
+ *      ChatMessage{from:"system"} announcing the hook name,
+ *      `session.state` → reload-banner state machine.
  *
  * Reload signal — see also `setReloading` in the store. We treat a
  * `session.state` envelope whose `plaintextMetadata.recordType` is
@@ -235,30 +251,137 @@ export function handleFrame(body: unknown): void {
   }
 
   // LocalEnvelope shape (kind / sessionId / plaintextMetadata / payload).
+  // Validate `kind` is a non-empty string — defensive against malformed
+  // frames from a bad daemon build, and required for the type narrowing
+  // below.
   const kind = (body as { kind?: unknown }).kind;
   if (typeof kind !== "string") return;
+  // From here on we treat the body as a LocalEnvelope. Field-level
+  // narrowing happens in the per-kind helpers (extractAgentText etc.)
+  // so a malformed payload degrades to "envelope dropped, banner not
+  // updated" rather than throwing.
+  const env = body as LocalEnvelope;
 
-  if (isReloadSignal(kind, body)) {
+  if (isReloadSignal(kind, env)) {
     useTetherStore.getState().setReloading(kind);
     return;
   }
   // Any other envelope kind (output.agent-event / output.hook-event /
   // session.state without a system recordType) means traffic resumed —
   // clear any in-flight reload banner. clearReloading is idempotent.
-  if (kind === "output.agent-event" || kind === "output.hook-event") {
+  if (
+    kind === EnvelopeKind.AgentEvent ||
+    kind === EnvelopeKind.HookEvent
+  ) {
     useTetherStore.getState().clearReloading();
   }
-  // (Intentionally no console.log on the hot path — production builds
-  // shouldn't spam the devtools console with envelope traffic.)
+
+  // -------- Phase 10: envelope → chat / DAG dispatch --------
+
+  if (kind === EnvelopeKind.AgentEvent) {
+    dispatchAgentEvent(env);
+    return;
+  }
+  if (kind === EnvelopeKind.HookEvent) {
+    dispatchHookEvent(env);
+    return;
+  }
+  // session.state without a system recordType, and unknown kinds: no
+  // chat / DAG side-effect today. The daemon may emit DAG-shaped
+  // events in a future patch; until then we just no-op here (FOLLOW-UP
+  // in the PR body). No console.log on the hot path.
+}
+
+/**
+ * Append an `output.agent-event` envelope as a ChatMessage row.
+ *
+ * Payload shape — `ciphertextPayload` is base64-encoded JSON of the cc
+ * `message` object: `{ role, content: [{ type, text? }, ...] }`.
+ * See internal/cc/jsonl/mapper.go::mapEvent (line ~135 — sets
+ * `payload = rec.Message`) and internal/cc/jsonl/record.go::Record.Message
+ * for the wire-side source of truth.
+ *
+ * Pure tool_use turns (no `text` blocks) are intentionally dropped
+ * here — surfacing them as empty bubbles is noisy. The DAG / fenced-
+ * block layers will surface tool_use separately in a later phase.
+ */
+function dispatchAgentEvent(env: LocalEnvelope): void {
+  const payload = decodePayload(env);
+  const text = extractAgentText(payload);
+  if (text === null) {
+    // Tool-use-only assistant turn or undecodable payload — skip.
+    return;
+  }
+  const role = extractAgentRole(env, payload);
+  const from: ChatMessage["from"] = role === "user" ? "user" : "ai";
+  // Stable id: prefer the cc record uuid (sourceUuid) so reconnect
+  // replays are idempotent against the existing `appendChat` dedup.
+  // Fall back to a synthetic id only when sourceUuid is missing
+  // (defensive — the mapper always sets it for EVENT class).
+  const id = env.sourceUuid ?? `evt-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+  // Timestamp: the mapper stamps `plaintextMetadata.timestamp` with
+  // the cc record's ISO-8601 timestamp. Fall back to "now" if missing.
+  const t = formatEnvelopeTime(env);
+  useTetherStore.getState().appendChat({ id, from, t, text });
+}
+
+/**
+ * Append an `output.hook-event` envelope as a `from:"system"` row.
+ *
+ * v0.1 surfaces only the hook name + event so the user sees that a
+ * hook fired without dumping the (potentially large) attachment
+ * payload. Future phases may inline stdout / stderr previews.
+ *
+ * Payload shape — `plaintextMetadata = { uuid, hookEvent, hookName?,
+ * toolUseID?, timestamp? }`. See internal/cc/jsonl/mapper.go::mapHook
+ * (line ~165) for the source of truth.
+ */
+function dispatchHookEvent(env: LocalEnvelope): void {
+  const meta = env.plaintextMetadata ?? {};
+  const hookEvent = typeof meta.hookEvent === "string" ? meta.hookEvent : "";
+  const hookName = typeof meta.hookName === "string" ? meta.hookName : "";
+  // hookEvent is mandatory per the daemon-side classifier (an
+  // attachment without hookEvent gets routed as STATE, not HOOK), so
+  // its absence here would mean a malformed envelope. Skip rather
+  // than render an empty system row.
+  if (hookEvent === "") return;
+  const display = hookName ? `${hookEvent} · ${hookName}` : hookEvent;
+  const id = env.sourceUuid ?? `hook-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+  const t = formatEnvelopeTime(env);
+  useTetherStore.getState().appendChat({
+    id,
+    from: "system",
+    t,
+    text: `hook: ${display}`,
+  });
+}
+
+/** Format the envelope's `plaintextMetadata.timestamp` (cc ISO-8601)
+ *  as the `HH:MM` string the chat renderer expects. Falls back to
+ *  current wall-clock when the daemon didn't stamp the envelope. */
+function formatEnvelopeTime(env: LocalEnvelope): string {
+  const meta = env.plaintextMetadata;
+  if (meta && typeof meta === "object") {
+    const ts = (meta as { timestamp?: unknown }).timestamp;
+    if (typeof ts === "string" && ts.length > 0) {
+      const d = new Date(ts);
+      if (!Number.isNaN(d.getTime())) return d.toTimeString().slice(0, 5);
+    }
+  }
+  return new Date().toTimeString().slice(0, 5);
 }
 
 /** True when the envelope kind/payload pair indicates a session reload
  *  is in progress. Today: `session.state` + `recordType === "system"`.
  *  Encapsulated so a future explicit `session.reloading` envelope kind
  *  is a one-line change here. */
-function isReloadSignal(kind: string, body: unknown): boolean {
-  if (kind !== "session.state") return false;
-  const meta = (body as { plaintextMetadata?: unknown }).plaintextMetadata;
+function isReloadSignal(kind: string, env: LocalEnvelope): boolean {
+  if (kind !== EnvelopeKind.SessionState) return false;
+  const meta = env.plaintextMetadata;
   if (!meta || typeof meta !== "object") return false;
   const recordType = (meta as { recordType?: unknown }).recordType;
   return recordType === "system";
