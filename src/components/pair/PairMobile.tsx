@@ -11,7 +11,6 @@
 // simulate affordance.
 
 import { Icon } from "@/blocks/Icon";
-import { PhoneFrame } from "@/components/mobile/PhoneFrame";
 import { useTetherStore } from "@/store";
 
 export function PairMobile() {
@@ -23,20 +22,14 @@ export function PairMobile() {
   const abortPair = useTetherStore((s) => s.abortPair);
 
   return (
-    <PhoneFrame
-      label="mobile · pair · scan + confirm"
-      statusBg="#0a0a08"
-      statusColor="white"
-      time="9:42"
+    <div
+      style={{
+        display: "grid",
+        gridTemplateRows: "auto 1fr auto",
+        height: "100%",
+        background: "#0a0a08",
+      }}
     >
-      <div
-        style={{
-          display: "grid",
-          gridTemplateRows: "auto 1fr auto",
-          height: "100%",
-          background: "#0a0a08",
-        }}
-      >
         <header
           style={{
             display: "flex",
@@ -204,8 +197,7 @@ export function PairMobile() {
         ) : (
           <div />
         )}
-      </div>
-    </PhoneFrame>
+    </div>
   );
 }
 
