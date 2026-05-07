@@ -1,11 +1,16 @@
 // AuthPrompt — modal dialog shown when the daemon requests permission to
 // run a cc tool. Subscribes to `pendingAuthRequest` in the store; on
-// pick, sends an `auth.tool-decision` frame back via the active rw
-// attach subscription and clears the request.
+// pick, sends an `auth.tool-decision` frame back via the supplied
+// transport sender callback and clears the request.
 //
 // UX choice: modal (not toast). Tool execution is gated on the user's
 // answer — a non-blocking toast can be missed and would leave cc hung
 // for the broker timeout (60s). A modal forces the choice now.
+//
+// Transport-agnostic: PR #15 originally wired this against the local
+// UDS attach socket; WT slice #5 (D-21) inverts the desktop client to
+// reach the daemon over WebTransport. The `sender` prop abstracts the
+// write side so AuthPrompt does not import either transport directly.
 //
 // Wire shape lives in src/transport/auth.ts; cross-repo contract is the
 // JSON-on-the-wire field names ("type", "requestId", "decision").
@@ -17,25 +22,31 @@ import {
   type AuthDecision,
   type AuthToolRequestMetadata,
 } from "@/transport/auth";
-import { sendInput, type AttachSubscription } from "@/transport/attach";
+
+/** Send an opaque input frame down the active attach transport. WT
+ *  path: writes to the control stream (channel-id 0x01) with a trailing
+ *  newline. UDS path (legacy `tether attach` TUI): writes via the
+ *  rw attach subscription. Returns a Promise that rejects on transport
+ *  failure; AuthPrompt catches and surfaces the error to the
+ *  connection banner. */
+export type InputSender = (bytes: Uint8Array) => Promise<void>;
 
 interface AuthPromptProps {
-  /** Live rw attach subscription used to ship the decision back. When
-   *  null, the prompt buttons render disabled with an explanatory tip. */
-  subscription: AttachSubscription | null;
+  /** Active transport input writer. When null, the prompt buttons
+   *  render disabled with an explanatory tip. */
+  sender: InputSender | null;
 }
 
-export function AuthPrompt({ subscription }: AuthPromptProps) {
+export function AuthPrompt({ sender }: AuthPromptProps) {
   const pending = useTetherStore((s) => s.pendingAuthRequest);
   const clear = useTetherStore((s) => s.clearAuthRequest);
 
   if (!pending) return null;
 
   const decide = async (decision: AuthDecision): Promise<void> => {
-    if (subscription) {
+    if (sender) {
       try {
-        await sendInput(
-          subscription,
+        await sender(
           encodeAuthDecisionFrame({
             type: AUTH_TOOL_DECISION_TYPE,
             requestId: pending.requestId,
@@ -82,7 +93,7 @@ export function AuthPrompt({ subscription }: AuthPromptProps) {
           <button
             type="button"
             className="btn-primary-sm"
-            disabled={!subscription}
+            disabled={!sender}
             onClick={() => void decide("allow-once")}
           >
             Allow once
@@ -90,7 +101,7 @@ export function AuthPrompt({ subscription }: AuthPromptProps) {
           <button
             type="button"
             className="btn-primary-sm"
-            disabled={!subscription}
+            disabled={!sender}
             onClick={() => void decide("allow-always")}
           >
             Allow always
@@ -98,7 +109,7 @@ export function AuthPrompt({ subscription }: AuthPromptProps) {
           <button
             type="button"
             className="btn-ghost-sm"
-            disabled={!subscription}
+            disabled={!sender}
             onClick={() => void decide("deny-once")}
           >
             Deny once
@@ -106,13 +117,13 @@ export function AuthPrompt({ subscription }: AuthPromptProps) {
           <button
             type="button"
             className="btn-ghost-sm"
-            disabled={!subscription}
+            disabled={!sender}
             onClick={() => void decide("deny-always")}
           >
             Deny always
           </button>
         </div>
-        {!subscription ? (
+        {!sender ? (
           <p className="auth-prompt-tip">
             attach socket is not in rw mode — switch to rw to answer
             authorization prompts (the daemon will deny on timeout).

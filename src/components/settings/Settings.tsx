@@ -5,9 +5,15 @@
 // rows show static placeholder values for now — Phase 8+ will wire
 // them to real device-key / version sources.
 
+import { useEffect, useState, useCallback } from "react";
 import { Icon } from "@/blocks/Icon";
 import { useTetherStore } from "@/store";
 import type { SettingsTab } from "@/store/types";
+import {
+  pairListDevices,
+  pairForgetDevice,
+  type PairedDevice,
+} from "@/transport/pair";
 
 interface NavEntry {
   key: SettingsTab;
@@ -23,10 +29,46 @@ export function Settings() {
   const toggleSkill = useTetherStore((s) => s.toggleSkill);
   const reconnect = useTetherStore((s) => s.reconnect);
   const attachSessionId = useTetherStore((s) => s.attachSessionId);
+  const daemonUrl = useTetherStore((s) => s.daemonUrl);
+  const pinnedCertSha256 = useTetherStore((s) => s.pinnedCertSha256);
   const attachState = useTetherStore((s) => s.attachState);
   const attachError = useTetherStore((s) => s.attachError);
   const setAttachSessionId = useTetherStore((s) => s.setAttachSessionId);
+  const setDaemonUrl = useTetherStore((s) => s.setDaemonUrl);
+  const setPinnedCertSha256 = useTetherStore((s) => s.setPinnedCertSha256);
   const triggerAttachReconnect = useTetherStore((s) => s.triggerAttachReconnect);
+  const setRoute = useTetherStore((s) => s.setRoute);
+
+  // Local-only paired-device list. Re-fetched whenever the user lands
+  // on the connection tab and after a "forget device" action. The
+  // store is intentionally NOT used as the source of truth — the on-
+  // disk registry under ~/.tether/users/default/devices/ is canonical
+  // and the list only matters when the connection panel is visible.
+  const [pairedDevices, setPairedDevices] = useState<PairedDevice[] | null>(
+    null,
+  );
+  const [pairListError, setPairListError] = useState<string | null>(null);
+
+  const refreshPairedDevices = useCallback(async (): Promise<void> => {
+    try {
+      const list = await pairListDevices();
+      setPairedDevices(list);
+      setPairListError(null);
+    } catch (e) {
+      // happy-dom / vitest without an invoke mock will land here. The
+      // panel renders the error inline so the user knows pairs aren't
+      // listable rather than seeing a stale "0 devices" claim.
+      const msg = e instanceof Error ? e.message : String(e);
+      setPairedDevices(null);
+      setPairListError(msg);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (settingsTab === "connection") {
+      void refreshPairedDevices();
+    }
+  }, [settingsTab, refreshPairedDevices]);
 
   const nav: NavEntry[] = [
     { key: "account", name: "account", sub: "wxk" },
@@ -156,7 +198,7 @@ export function Settings() {
               <Row k="e2e" v="X25519 · ChaCha20-Poly1305" />
 
               <div className="set-section-title" style={{ marginTop: 18 }}>
-                attach socket
+                webtransport
               </div>
               <Row
                 k="state"
@@ -187,6 +229,19 @@ export function Settings() {
                 }
               />
               <Row
+                k="daemonUrl"
+                v={
+                  <input
+                    type="text"
+                    aria-label="daemon url"
+                    placeholder="https://localhost:4444"
+                    value={daemonUrl}
+                    onChange={(e) => setDaemonUrl(e.target.value.trim())}
+                    style={inputStyle}
+                  />
+                }
+              />
+              <Row
                 k="sessionId"
                 v={
                   <input
@@ -195,17 +250,22 @@ export function Settings() {
                     placeholder="cc session uuid"
                     value={attachSessionId}
                     onChange={(e) => setAttachSessionId(e.target.value.trim())}
-                    style={{
-                      width: "100%",
-                      maxWidth: 320,
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 12,
-                      padding: "4px 8px",
-                      background: "var(--bg-input, transparent)",
-                      color: "var(--ink-primary)",
-                      border: "1px solid var(--ink-tertiary)",
-                      borderRadius: 4,
-                    }}
+                    style={inputStyle}
+                  />
+                }
+              />
+              <Row
+                k="pinnedCertSha256"
+                v={
+                  <input
+                    type="text"
+                    aria-label="pinned cert sha256"
+                    placeholder="leave empty for OS trust; pin only for self-signed dev"
+                    value={pinnedCertSha256}
+                    onChange={(e) =>
+                      setPinnedCertSha256(e.target.value.trim())
+                    }
+                    style={inputStyle}
                   />
                 }
               />
@@ -219,6 +279,82 @@ export function Settings() {
                   }
                 />
               )}
+
+              <div className="set-section-title" style={{ marginTop: 18 }}>
+                paired devices ·{" "}
+                {pairedDevices === null ? "?" : pairedDevices.length}
+              </div>
+              {pairListError && (
+                <Row
+                  k="error"
+                  v={
+                    <span style={{ color: "var(--accent)", fontSize: 11.5 }}>
+                      {pairListError}
+                    </span>
+                  }
+                />
+              )}
+              {pairedDevices !== null && pairedDevices.length === 0 && (
+                <Row
+                  k="status"
+                  v={
+                    <span
+                      style={{
+                        color: "var(--ink-tertiary)",
+                        fontSize: 11.5,
+                      }}
+                    >
+                      no devices paired — pair first to attach
+                    </span>
+                  }
+                />
+              )}
+              {pairedDevices?.map((d) => (
+                <Row
+                  key={d.deviceId}
+                  k={d.displayName || d.deviceId}
+                  v={
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 11.5,
+                        color: "var(--ink-tertiary)",
+                      }}
+                    >
+                      {d.kind} · {d.deviceId.slice(0, 12)}… · paired{" "}
+                      {d.pairedAt.slice(0, 10)}
+                    </span>
+                  }
+                  action={
+                    <button
+                      type="button"
+                      className="btn-ghost-sm"
+                      aria-label={`forget ${d.deviceId}`}
+                      onClick={() => {
+                        void (async () => {
+                          try {
+                            await pairForgetDevice(d.deviceId);
+                          } catch {
+                            /* surfaced via refresh */
+                          }
+                          await refreshPairedDevices();
+                        })();
+                      }}
+                    >
+                      forget
+                    </button>
+                  }
+                />
+              ))}
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="btn-primary-sm"
+                  onClick={() => setRoute("pair")}
+                >
+                  pair new device
+                </button>
+              </div>
             </>
           )}
 
@@ -257,3 +393,15 @@ function Row({
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  maxWidth: 320,
+  fontFamily: "var(--font-mono)",
+  fontSize: 12,
+  padding: "4px 8px",
+  background: "var(--bg-input, transparent)",
+  color: "var(--ink-primary)",
+  border: "1px solid var(--ink-tertiary)",
+  borderRadius: 4,
+};

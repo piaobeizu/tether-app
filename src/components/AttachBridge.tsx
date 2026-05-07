@@ -1,24 +1,34 @@
-// AttachBridge — connects the React shell to the local daemon attach
-// socket via the `tether_attach_*` Tauri commands.
+// AttachBridge — connects the React shell to the daemon's WebTransport
+// (HTTP/3) endpoint via the WT slice #5 transport (`@/transport/wt-attach`).
+//
+// Spec: D-13 / D-21 / §11.Y.5 — desktop is the daemon's REMOTE client,
+// even on the same machine. The same-machine UDS path (`@/transport/attach`
+// + `tether_attach_*` Tauri commands) is preserved for the `tether attach`
+// TUI scenario but is no longer used by the React shell.
 //
 // Mounts once near the top of AppShell. On mount:
 //   1. If `attachSessionId` is empty → state = "idle" (user must enter
 //      a sid in Settings → connection).
-//   2. Otherwise call `subscribe()`, push state transitions into the
-//      store, and pump frames into the chat / dag slices via simple
-//      kind-dispatch (v0.1: append a debug chat row per envelope; the
-//      Phase-10 work will turn these into proper chat / dag updates).
+//   2. If no paired devices on this user → state = "needs-pair". The
+//      user navigates to Pair from Settings → Connection ("Pair new
+//      device") and re-enters this surface after the long-term key is
+//      persisted.
+//   3. Otherwise call `connectWtAttach()` with the daemon URL +
+//      pinned-cert sha256 from the store, push state transitions into
+//      the store, and pump envelopes into the chat / dag slices via
+//      kind-dispatch (Phase 10, transport-agnostic).
 //
 // Reconnect: on `state === "error" | "dropped"` we schedule a 2s
 // backoff, capped at MAX_RECONNECTS attempts. After the cap we leave
 // the bridge in `no-daemon` state — the user clicks "reconnect" in the
 // connection panel to retry.
 //
-// This component renders nothing — it is mount-only effect glue.
+// This component renders the AuthPrompt modal (PR #15) wired to the
+// active WT control stream as the input sender; otherwise no UI.
 
 import { useEffect, useRef, useState } from "react";
 import { useTetherStore } from "@/store";
-import { subscribe, type AttachSubscription } from "@/transport/attach";
+import { connectWtAttach, type WtAttachClient } from "@/transport/wt-attach";
 import { isAuthToolRequest } from "@/transport/auth";
 import {
   decodePayload,
@@ -27,64 +37,51 @@ import {
   extractAgentText,
   type LocalEnvelope,
 } from "@/transport/envelope";
-import { AuthPrompt } from "@/components/AuthPrompt";
+import { pairListDevices } from "@/transport/pair";
+import { AuthPrompt, type InputSender } from "@/components/AuthPrompt";
 import type { ChatMessage } from "@/store/types";
 
 const RECONNECT_BACKOFF_MS = 2000;
 const MAX_RECONNECTS = 5;
 
-/** Stable per-app device id. We just persist a uuid in localStorage so
- *  the daemon's lock-attribution treats reconnects from this app as the
- *  same client.
- *
- *  Uses `crypto.randomUUID()` (cryptographically secure RNG, available
- *  in all Tauri webview targets — desktop WebView2/WKWebView and
- *  mobile WebView 78+) instead of `Math.random()` so two app installs
- *  are vanishingly unlikely to collide on a deviceId. Collisions
- *  would mis-attribute another user's lock to this app in the
- *  daemon's `lock.History` audit trail. */
-const DEVICE_ID_STORAGE_KEY = "tether.attach.deviceId";
-
-function generateDeviceId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `ui-app-${crypto.randomUUID()}`;
-  }
-  // Last-resort fallback for ancient runtimes (should never trigger
-  // in any Tauri-supported target). Marked with a -fallback suffix so
-  // it shows up in lock.History if anyone ever sees one.
-  return `ui-app-fallback-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function deviceId(): string {
-  if (typeof window === "undefined") return "ui-app-headless";
+/** Pick the device id this app should advertise on the SessionIDHeader.
+ *  v0.1 single-user (D-04) → just the first paired record's deviceId.
+ *  When the registry returns empty, the caller stops in `needs-pair`
+ *  state; this function returns `null` in that case so the caller can
+ *  branch without re-running the call. */
+async function pickPairedDeviceId(): Promise<string | null> {
   try {
-    const existing = window.localStorage.getItem(DEVICE_ID_STORAGE_KEY);
-    if (existing) return existing;
-    const fresh = generateDeviceId();
-    window.localStorage.setItem(DEVICE_ID_STORAGE_KEY, fresh);
-    return fresh;
+    const list = await pairListDevices();
+    if (!Array.isArray(list) || list.length === 0) return null;
+    const first = list[0];
+    return first?.deviceId ?? null;
   } catch {
-    return generateDeviceId();
+    // Tauri runtime missing (vitest happy-dom without invoke mock) →
+    // treat as "no paired devices yet". Tests that want WT to actually
+    // fire mock the pair_list_devices invoke.
+    return null;
   }
 }
 
 export function AttachBridge() {
   const sessionId = useTetherStore((s) => s.attachSessionId);
+  const daemonUrl = useTetherStore((s) => s.daemonUrl);
+  const pinnedCertSha256 = useTetherStore((s) => s.pinnedCertSha256);
   const reconnectTrigger = useTetherStore((s) => s.attachReconnectAttempt);
   const setAttachState = useTetherStore((s) => s.setAttachState);
 
-  // Track the live subscription + retry counter across renders without
+  // Track the live WT client + retry counter across renders without
   // triggering re-renders. The effect below is the single owner.
-  const subRef = useRef<AttachSubscription | null>(null);
+  const clientRef = useRef<WtAttachClient | null>(null);
   const retriesRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Generation counter — bumped on every effect run so a late frame
+  // Generation counter — bumped on every effect run so a late envelope
   // event from a previous run can be discarded.
   const genRef = useRef(0);
-  // Mirror of subRef into render state so <AuthPrompt /> can react when
-  // the subscription comes online / drops. Updated via setLiveSub in the
-  // effect alongside subRef.
-  const [liveSub, setLiveSub] = useState<AttachSubscription | null>(null);
+  // Mirror of clientRef into render state so <AuthPrompt /> can react
+  // when the WT client comes online / drops. The exposed shape is just
+  // the `sendInput` writer (an InputSender), not the full client.
+  const [liveSender, setLiveSender] = useState<InputSender | null>(null);
 
   useEffect(() => {
     if (!sessionId) {
@@ -101,18 +98,43 @@ export function AttachBridge() {
 
     const tryConnect = async (): Promise<void> => {
       if (cancelled || myGen !== genRef.current) return;
+
+      // Resolve the device id from the local pair registry BEFORE we
+      // open WT — if no devices are paired, we stop in `needs-pair`
+      // state. Reconnect / "I just paired" flow goes through the
+      // manual triggerAttachReconnect() path, which re-runs this
+      // effect.
+      const deviceId = await pickPairedDeviceId();
+      if (cancelled || myGen !== genRef.current) return;
+      if (deviceId === null) {
+        setAttachState(
+          "needs-pair",
+          "no paired devices — pair first from Settings → Connection",
+        );
+        return;
+      }
+
       try {
-        const sub = await subscribe({
+        const client = await connectWtAttach({
+          daemonUrl,
           sessionId,
-          // rw mode is required so auth.tool-decision frames can be
-          // routed back via sendInput. The Rust bridge auto-downgrades
-          // if the daemon refused; that's reflected in the ack message
-          // handled in the state callback.
-          mode: "rw",
-          client: { kind: "terminal", deviceId: deviceId() },
-          onFrame: (frame) => {
+          deviceId,
+          pinnedCertSha256: pinnedCertSha256 || undefined,
+          onEnvelope: (env) => {
             if (cancelled || myGen !== genRef.current) return;
-            handleFrame(frame.body);
+            // The Rust `wt_recv_envelope` returns a DecryptedEnvelope
+            // whose `body` is the daemon's wire-shape LocalEnvelope as
+            // a UTF-8 JSON string. Parse → handleFrame so the existing
+            // dispatch logic (PR #16, PR #15, PR #14) works unchanged.
+            let frame: unknown;
+            try {
+              frame = JSON.parse(env.body);
+            } catch {
+              // Defensive — daemon should always emit valid JSON. Drop
+              // and let the loop continue.
+              return;
+            }
+            handleFrame(frame);
           },
           onState: (event) => {
             if (cancelled || myGen !== genRef.current) return;
@@ -122,24 +144,28 @@ export function AttachBridge() {
             } else if (event.state === "connecting") {
               setAttachState("connecting");
             } else if (event.state === "error") {
-              setAttachState("error", event.error ?? "attach error");
+              setAttachState("error", event.error ?? "wt-attach error");
               scheduleReconnect();
             } else if (event.state === "dropped") {
-              setAttachState("backoff-pending", "daemon dropped the connection");
+              setAttachState("backoff-pending", "daemon dropped the WT session");
               scheduleReconnect();
             }
           },
         });
         if (cancelled || myGen !== genRef.current) {
-          // Unmount race — drop the just-opened subscription.
-          void sub.dispose();
+          // Unmount race — drop the just-opened client.
+          void client.dispose();
           return;
         }
-        subRef.current = sub;
-        setLiveSub(sub);
+        clientRef.current = client;
+        setLiveSender(() => client.sendInput.bind(client));
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        setAttachState("error", `subscribe failed: ${msg}`);
+        // connectWtAttach reports the same failure via onState above
+        // (so the banner already shows the right state); re-asserting
+        // here is harmless and covers the path where the throw races
+        // ahead of the onState callback (e.g. synchronous validation).
+        setAttachState("error", `wt-attach connect: ${msg}`);
         scheduleReconnect();
       }
     };
@@ -157,12 +183,12 @@ export function AttachBridge() {
       }
       reconnectTimerRef.current = setTimeout(() => {
         reconnectTimerRef.current = null;
-        // Tear the previous handle FIRST so the new connect can reclaim
+        // Tear the previous client FIRST so the new connect can reclaim
         // resources cleanly. Best-effort.
-        if (subRef.current) {
-          const old = subRef.current;
-          subRef.current = null;
-          setLiveSub(null);
+        if (clientRef.current) {
+          const old = clientRef.current;
+          clientRef.current = null;
+          setLiveSender(null);
           void old.dispose();
         }
         void tryConnect();
@@ -177,16 +203,17 @@ export function AttachBridge() {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      const sub = subRef.current;
-      subRef.current = null;
-      setLiveSub(null);
-      if (sub) void sub.dispose();
+      const c = clientRef.current;
+      clientRef.current = null;
+      setLiveSender(null);
+      if (c) void c.dispose();
     };
-    // sessionId / reconnectTrigger are the only inputs that should
-    // restart the bridge. setAttachState is stable (zustand action).
-  }, [sessionId, reconnectTrigger, setAttachState]);
+    // sessionId / daemonUrl / pinnedCertSha256 / reconnectTrigger are
+    // the only inputs that should restart the bridge. setAttachState is
+    // stable (zustand action).
+  }, [sessionId, daemonUrl, pinnedCertSha256, reconnectTrigger, setAttachState]);
 
-  return <AuthPrompt subscription={liveSub} />;
+  return <AuthPrompt sender={liveSender} />;
 }
 
 /**
@@ -195,7 +222,9 @@ export function AttachBridge() {
  *
  *   1. **Connection-state frames** — `attach.lock-denied` / `attach.ack`.
  *      These have a top-level `type` field (NOT `kind`) and are
- *      handled before the LocalEnvelope branch.
+ *      handled before the LocalEnvelope branch. Legacy from the UDS
+ *      path; the WT daemon does not emit these today, but the
+ *      classifier stays so the dispatcher remains transport-agnostic.
  *   2. **Auth prompts** — `auth.tool-request` envelopes are routed
  *      into the auth-prompt slice for <AuthPrompt /> to render.
  *   3. **LocalEnvelope dispatch** (Phase 10) — `output.agent-event` →
@@ -207,14 +236,13 @@ export function AttachBridge() {
  * `session.state` envelope whose `plaintextMetadata.recordType` is
  * `"system"` as the proxy for "the cc subprocess just (re)started":
  * after `Session.Recover` re-spawns cc, the next prompt drives a fresh
- * `system` JSONL record into the watcher → mapper → attach socket
- * pipeline. We use that as the closest approximation of "reload
- * happening" until the daemon emits an explicit `session.reloading`
- * envelope (tracked as a follow-up). Any subsequent envelope of a
- * different kind (`output.agent-event` or `output.hook-event`) means
- * agent work has resumed → clear the banner. The store also arms a
- * 30s safety timeout so the UI never wedges if no clearing event
- * arrives.
+ * `system` JSONL record into the watcher → mapper → wire pipeline. We
+ * use that as the closest approximation of "reload happening" until
+ * the daemon emits an explicit `session.reloading` envelope (tracked
+ * as a follow-up). Any subsequent envelope of a different kind
+ * (`output.agent-event` or `output.hook-event`) means agent work has
+ * resumed → clear the banner. The store also arms a 30s safety
+ * timeout so the UI never wedges if no clearing event arrives.
  *
  * Exported for tests.
  */
