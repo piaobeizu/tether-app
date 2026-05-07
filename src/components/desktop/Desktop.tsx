@@ -22,6 +22,7 @@ import { Msg } from "./Msg";
 import { WorkspaceTree } from "./WorkspaceTree";
 
 export function Desktop() {
+  const attachState = useTetherStore((s) => s.attachState);
   const connection = useTetherStore((s) => s.connection);
   const paired = useTetherStore((s) => s.paired);
   const slashOpen = useTetherStore((s) => s.slashOpen);
@@ -102,15 +103,15 @@ export function Desktop() {
         <div className="dt-titlebar-right">
           <span
             className={
-              "pill " + (connection.state === "live" ? "live" : "warn")
+              "pill " + (attachState === "connected" ? "live" : "warn")
             }
           >
             <span className="dot" />
-            {connection.state === "live"
+            {attachState === "connected"
               ? `daemon · live · ${connection.latency}ms`
-              : connection.state === "reconnecting"
+              : attachState === "reconnecting" || attachState === "backoff-pending"
                 ? `reconnecting · attempt ${connection.attempt}`
-                : "dropped"}
+                : attachState}
           </span>
           {paired && (
             <span className="pill">
@@ -119,7 +120,7 @@ export function Desktop() {
                 size={10}
                 style={{ color: "var(--success)" }}
               />
-              Pixel · paired
+              mobile · paired
             </span>
           )}
           <button
@@ -136,7 +137,7 @@ export function Desktop() {
         </div>
       </div>
 
-      {errorBannerVisible && connection.state !== "live" && (
+      {errorBannerVisible && attachState !== "connected" && (
         <div className="dt-error-banner">
           <span className="pulse-dot" />
           <span style={{ fontWeight: 600 }}>daemon unreachable</span>
@@ -340,9 +341,9 @@ export function Desktop() {
       <div className="dt-statusbar">
         <span className="sb-cell">
           <span
-            className={"dot " + (connection.state === "live" ? "live" : "")}
+            className={"dot " + (attachState === "connected" ? "live" : "")}
           />
-          {connection.state}
+          {attachState}
         </span>
         <span className="sb-cell mono">main</span>
         <span className="sb-cell mono">

@@ -73,7 +73,7 @@ export function Settings() {
   const nav: NavEntry[] = [
     { key: "account", name: "account", sub: "wxk" },
     { key: "skills", name: "skills", sub: `${skills.length} installed` },
-    { key: "connection", name: "connection", sub: connection.state },
+    { key: "connection", name: "connection", sub: attachState },
     { key: "about", name: "about", sub: "v0.1.0-rc.3" },
   ];
 
@@ -176,11 +176,11 @@ export function Settings() {
                 v={
                   <span
                     className={
-                      "pill " + (connection.state === "live" ? "live" : "warn")
+                      "pill " + (attachState === "connected" ? "live" : "warn")
                     }
                   >
                     <span className="dot" />
-                    {connection.state}
+                    {attachState}
                   </span>
                 }
                 action={

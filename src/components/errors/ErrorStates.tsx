@@ -15,7 +15,7 @@ import { useTetherStore } from "@/store";
 
 export function ErrorStates() {
   const errorBannerVisible = useTetherStore((s) => s.errorBannerVisible);
-  const wtState = useTetherStore((s) => s.wtState);
+  const attachState = useTetherStore((s) => s.attachState);
   const connection = useTetherStore((s) => s.connection);
   const reconnect = useTetherStore((s) => s.reconnect);
   const dismissBanner = useTetherStore((s) => s.dismissBanner);
@@ -125,11 +125,11 @@ export function ErrorStates() {
       </div>
 
       <div className="err-wt">
-        <span className={"wt-dot " + wtState} />
+        <span className={"wt-dot " + (attachState === "connected" ? "live" : "reconnecting")} />
         <span className="mono" style={{ fontSize: 11 }}>
-          WT · {wtState}
+          WT · {attachState}
         </span>
-        {wtState !== "live" && (
+        {attachState !== "connected" && (
           <button
             type="button"
             className="btn-ghost-sm"

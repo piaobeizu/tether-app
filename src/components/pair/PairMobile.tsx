@@ -94,7 +94,7 @@ export function PairMobile() {
               className="mono"
               style={{ fontSize: 12, color: "rgba(255,255,255,.5)" }}
             >
-              session shared with wxk-mbp-14
+              session shared with desktop
             </div>
           </div>
         ) : (
@@ -150,7 +150,7 @@ export function PairMobile() {
             </div>
 
             <div className="pair-fp-card">
-              <FpRow k="device" v="wxk-mbp-14" />
+              <FpRow k="device" v="desktop" />
               <FpRow k="fingerprint" v="SHA256:8a2f…b4c1" accent />
               <FpRow k="code" v={pairCode} big />
             </div>
