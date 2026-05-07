@@ -43,10 +43,12 @@ compile_error!(
 pub fn run() {
     let wt_state = wt::WtState::default();
     let attach_state = attach::AttachState::default();
+    let pair_state = wt::pair::PairState::new();
 
     let builder = tauri::Builder::default()
         .manage(wt_state)
         .manage(attach_state)
+        .manage(pair_state)
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_deep_link::init())
         // TODO(security-review): replace with a real Argon2id-based key
@@ -89,6 +91,11 @@ pub fn run() {
             wt::envelope::wt_recv_envelope,
             wt::wt_close_stream,
             wt::wt_close,
+            wt::pair::pair_start,
+            wt::pair::pair_confirm,
+            wt::pair::pair_abort,
+            wt::pair::pair_list_devices,
+            wt::pair::pair_forget_device,
             attach::tether_attach_subscribe,
             attach::tether_attach_unsubscribe,
             attach::tether_attach_send_input,

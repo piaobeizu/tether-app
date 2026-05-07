@@ -47,6 +47,16 @@ import type {
 const THEME_STORAGE_KEY = "tether.theme";
 const ATTACH_SID_STORAGE_KEY = "tether.attach.sessionId";
 
+/** Tauri runtime detection — `__TAURI_INTERNALS__` is injected by the
+ *  Tauri 2 runtime into `window` before user code runs. Used to gate the
+ *  pair-flow's `pair_start` / `pair_confirm` / `pair_abort` Tauri calls
+ *  so the design canvas + vitest happy-dom do NOT hit a missing
+ *  invoke surface. */
+function isTauriRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
 function readPersistedTheme(): Theme {
   if (typeof window === "undefined") return "light";
   try {
@@ -161,10 +171,22 @@ export interface State {
   settingsTab: SettingsTab;
   skills: Skill[];
 
-  // Pair
+  // Pair (real Tauri commands as of slice #4 — see transport/pair.ts)
   pairCode: string;
   pairTtl: number;
   pairMobileStep: PairMobileStep;
+  /** Rust-side handle for the in-flight pair. Null when not in a pair
+   *  flow. Set by `regeneratePairCode` (which now invokes `pair_start`)
+   *  and cleared by `confirmPair` / `abortPair`. */
+  pairHandleId: string | null;
+  /** Last error reported from `pair_*` Tauri commands. Mapped to spec
+   *  §3.5 reason enum where possible. Cleared on the next attempt. */
+  pairError: string | null;
+  /** WT bidi stream id (control channel, channel-id 0x01) used for pair
+   *  frames. Set by the bring-up flow before the user enters the pair
+   *  screen; null on the design canvas / unit tests so the store falls
+   *  back to a synchronous mock SAS. */
+  _pairStreamId: string | null;
 
   // Top-level shell route (Phase 8). Drives <AppShell />; ignored
   // by the design-canvas App where every surface is rendered.
@@ -235,9 +257,24 @@ export interface Actions {
   triggerError: () => void;
 
   // Pair
-  regeneratePairCode: () => void;
+  /** Kicks off a real `pair_start` Tauri call (spec §11.AB initiator
+   *  side). On success: pairCode = SAS string, pairTtl reset, handle
+   *  stashed. On failure: pairError populated with the Rust-side reason
+   *  string (mapped to spec §3.5 enum where the Rust layer recognizes
+   *  it). The function name is preserved from Phase 6 so callers don't
+   *  change. The mock fallback (Math.random) is retained ONLY when
+   *  Tauri is not available (e.g. vitest happy-dom unit tests that
+   *  don't mock the invoke surface). */
+  regeneratePairCode: () => Promise<void>;
   setMobilePairStep: (step: PairMobileStep) => void;
-  confirmPair: () => void;
+  /** "It matches" — invokes `pair_confirm` and tears down the local
+   *  pair handle on success. */
+  confirmPair: () => Promise<void>;
+  /** "Cancel" / "doesn't match" — invokes `pair_abort` with the given
+   *  reason. Defaults to `"user-cancel"` per spec §3.5. */
+  abortPair: (reason?: string) => Promise<void>;
+  /** Direct setter — primarily for tests + error-recovery paths. */
+  setPairError: (error: string | null) => void;
   /** Internal — used by the TTL countdown ticker. */
   _tickPairTtl: () => void;
 
@@ -375,6 +412,9 @@ function initialState(): State {
     pairCode: "4F2-9K7",
     pairTtl: 47,
     pairMobileStep: "scan",
+    pairHandleId: null,
+    pairError: null,
+    _pairStreamId: null,
 
     route: "home",
     theme: readPersistedTheme(),
@@ -621,17 +661,87 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
       });
     },
 
-    regeneratePairCode: () => {
-      set({ pairCode: regenCode(), pairTtl: PAIR_TTL_INITIAL });
+    regeneratePairCode: async () => {
+      // Reset error state up-front so a previous failure doesn't bleed
+      // into the new attempt's UX.
+      set({ pairError: null });
+      // Synchronous mock fallback path keeps the design canvas / vitest
+      // alive when Tauri isn't reachable. We commit the mock SAS
+      // immediately so callers (and tests) that don't await still see a
+      // consistent post-call snapshot.
+      set({
+        pairCode: regenCode(),
+        pairTtl: PAIR_TTL_INITIAL,
+        pairHandleId: null,
+      });
+      if (!isTauriRuntime()) return;
+      const streamId = get()._pairStreamId;
+      if (!streamId) return; // UI hasn't opened a control stream yet.
+      try {
+        const transport = await import("@/transport/pair");
+        const handle = await transport.pairStart({
+          streamId,
+          selfDeviceId: get().attachSessionId || "device-desktop-local",
+          deviceMetadata: {
+            kind: "desktop",
+            displayName: "Tether Desktop",
+            appVersion: "tether 0.1.0-dev",
+          },
+        });
+        set({
+          pairCode: handle.sas,
+          pairTtl: PAIR_TTL_INITIAL,
+          pairHandleId: handle.handleId,
+          pairError: null,
+        });
+      } catch (e) {
+        const reason =
+          typeof e === "string" ? e : (e as Error)?.message ?? String(e);
+        set({ pairError: reason, pairHandleId: null });
+      }
     },
 
     setMobilePairStep: (step) => {
       set({ pairMobileStep: step });
     },
 
-    confirmPair: () => {
+    confirmPair: async () => {
+      // Optimistic UI: advance to success state immediately so the
+      // mobile design canvas keeps its existing UX. If the Tauri call
+      // fails afterwards, surface the error and fall back to scan.
       set({ pairMobileStep: "success" });
-      setTimeout(() => set({ pairMobileStep: "scan" }), 3000);
+      const handleId = get().pairHandleId;
+      if (!isTauriRuntime() || !handleId) {
+        setTimeout(() => set({ pairMobileStep: "scan" }), 3000);
+        return;
+      }
+      try {
+        const transport = await import("@/transport/pair");
+        await transport.pairConfirm(handleId);
+        set({ pairHandleId: null, pairError: null });
+        setTimeout(() => set({ pairMobileStep: "scan" }), 3000);
+      } catch (e) {
+        const reason =
+          typeof e === "string" ? e : (e as Error)?.message ?? String(e);
+        set({ pairError: reason, pairMobileStep: "scan" });
+      }
+    },
+
+    abortPair: async (reason = "user-cancel") => {
+      const handleId = get().pairHandleId;
+      // Tear down local state immediately; abort is best-effort.
+      set({ pairHandleId: null, pairMobileStep: "scan", pairError: null });
+      if (!isTauriRuntime() || !handleId) return;
+      try {
+        const transport = await import("@/transport/pair");
+        await transport.pairAbort(handleId, reason);
+      } catch {
+        // Spec §3.5 — abort is fire-and-forget.
+      }
+    },
+
+    setPairError: (error) => {
+      set({ pairError: error });
     },
 
     _tickPairTtl: () => {

@@ -25,6 +25,7 @@
 
 pub mod envelope;
 mod error;
+pub mod pair;
 mod state;
 
 use std::time::Duration;
