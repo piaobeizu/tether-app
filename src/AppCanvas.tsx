@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
 import { ErrorStates } from "@/components/errors/ErrorStates";
 import { MobileMain } from "@/components/mobile/MobileMain";
+import { PhoneFrame } from "@/components/mobile/PhoneFrame";
 import { PairDesktop } from "@/components/pair/PairDesktop";
 import { PairMobile } from "@/components/pair/PairMobile";
 import { Settings } from "@/components/settings/Settings";
@@ -58,14 +59,23 @@ export function AppCanvas() {
         <CanvasCell minHeight={720}>
           <Desktop />
         </CanvasCell>
-        <MobileMain />
+        <PhoneFrame label="mobile · main · drawer + skill detail · all interactive">
+          <MobileMain />
+        </PhoneFrame>
       </CanvasRow>
 
       <CanvasRow>
         <CanvasCell minHeight={540}>
           <PairDesktop />
         </CanvasCell>
-        <PairMobile />
+        <PhoneFrame
+          label="mobile · pair · scan + confirm"
+          statusBg="#0a0a08"
+          statusColor="white"
+          time="9:42"
+        >
+          <PairMobile />
+        </PhoneFrame>
       </CanvasRow>
 
       <CanvasRow>

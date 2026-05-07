@@ -26,8 +26,6 @@ import {
 import { Icon } from "@/blocks/Icon";
 import { useTetherStore } from "@/store";
 import type { ChatRole } from "@/store/types";
-import { PhoneFrame } from "./PhoneFrame";
-
 export function MobileMain() {
   const chat = useTetherStore((s) => s.chat);
   const drawerOpen = useTetherStore((s) => s.drawerOpen);
@@ -66,8 +64,7 @@ export function MobileMain() {
   };
 
   return (
-    <PhoneFrame label="mobile · main · drawer + skill detail · all interactive">
-      <div className="m-main">
+    <div className="m-main">
         {/* Drawer overlay — workspace list pushes from the left. */}
         {drawerOpen && (
           <div
@@ -275,8 +272,7 @@ export function MobileMain() {
             </button>
           </div>
         </div>
-      </div>
-    </PhoneFrame>
+    </div>
   );
 }
 
