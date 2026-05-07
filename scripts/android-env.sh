@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # scripts/android-env.sh — source this before `cargo check/build --target=*-linux-android*`
-# Required: ANDROID_NDK_HOME pointing at NDK r26 or newer.
+# Required: ANDROID_NDK_HOME pointing at NDK r27 (current LTS) or newer.
+# Verified working: r27d, r28c, r29.
 #
 # Usage:
-#   export ANDROID_NDK_HOME=/opt/android-ndk-r26d
+#   export ANDROID_NDK_HOME=/opt/android-ndk-r29
 #   source scripts/android-env.sh
 #   cargo check --target=aarch64-linux-android --lib
 #
@@ -14,9 +15,12 @@
 #
 # minSdk pinned at 21 (Tauri 2 Mobile floor; bump alongside cargo-mobile2 + Gradle).
 
-set -u
+# Use parameter expansion defaults instead of `set -u` so this script
+# stays robust when sourced into shells that have unbound variables
+# elsewhere (e.g. some shell-snapshot wrappers reference ZSH_VERSION
+# without setting it).
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
-  echo "ERROR: ANDROID_NDK_HOME not set. Install NDK r26+ and export ANDROID_NDK_HOME=/path/to/ndk." >&2
+  echo "ERROR: ANDROID_NDK_HOME not set. Install NDK r27+ (current LTS) and export ANDROID_NDK_HOME=/path/to/ndk." >&2
   return 1 2>/dev/null || exit 1
 fi
 if [[ ! -d "$ANDROID_NDK_HOME" ]]; then

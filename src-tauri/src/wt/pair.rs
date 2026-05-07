@@ -41,14 +41,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
+// chacha20poly1305 0.10 uses crypto-common 0.1; hmac 0.13 uses crypto-common 0.2.
+// Both expose a `KeyInit` trait, so we alias the hmac/digest one to keep both
+// in scope without collision.
 use chacha20poly1305::aead::{AeadInPlace, KeyInit};
 use chacha20poly1305::{Tag, XChaCha20Poly1305, XNonce};
 use chrono::Utc;
 use dashmap::DashMap;
 use hkdf::Hkdf;
+use hmac::digest::KeyInit as DigestKeyInit;
 use hmac::{Hmac, Mac};
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rngs::SysRng;
+use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -293,7 +297,8 @@ pub fn compute_sas(sas_key: &[u8; 32]) -> String {
 /// part before it is ASCII. Order is fixed.
 pub fn confirm_mac(sas_key: &[u8; 32], role: &str, transcript_hash: &[u8; 32]) -> [u8; 32] {
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac = <HmacSha256 as Mac>::new_from_slice(sas_key).expect("HMAC key any length");
+    let mut mac =
+        <HmacSha256 as DigestKeyInit>::new_from_slice(sas_key).expect("HMAC key any length");
     mac.update(CONFIRM_LABEL_PREFIX);
     mac.update(b"|");
     mac.update(role.as_bytes());
@@ -779,12 +784,19 @@ async fn pair_start_inner(
     pair_state: &PairState,
 ) -> Result<PairHandleOut, WtError> {
     // 1. Generate ephemeral keypair.
-    let initiator_priv = StaticSecret::random_from_rng(OsRng);
+    //    `StaticSecret::random()` uses x25519-dalek's internal `rand_core 0.6`
+    //    OsRng (gated behind the `getrandom` feature on x25519-dalek). We
+    //    don't pipe a top-level `rand 0.10` rng in here because x25519-dalek
+    //    2.0.1 still pins `rand_core ^0.6`, which is incompatible with the
+    //    `rand_core 0.10` that comes with our top-level `rand 0.10` bump.
+    let initiator_priv = StaticSecret::random();
     let initiator_pub = PublicKey::from(&initiator_priv);
 
     // 2. Build pair.invite.
     let mut nonce = [0u8; 16];
-    OsRng.fill_bytes(&mut nonce);
+    SysRng
+        .try_fill_bytes(&mut nonce)
+        .expect("system RNG must be available");
     let invite = InviteFrame {
         kind: "pair.invite".into(),
         v: PAIR_PROTOCOL_VERSION,
@@ -1415,8 +1427,8 @@ mod tests {
     /// secret + the same SAS string for honest peers.
     #[test]
     fn x25519_hkdf_honest_roundtrip() {
-        let a_priv = StaticSecret::random_from_rng(OsRng);
-        let b_priv = StaticSecret::random_from_rng(OsRng);
+        let a_priv = StaticSecret::random();
+        let b_priv = StaticSecret::random();
         let a_pub = PublicKey::from(&a_priv);
         let b_pub = PublicKey::from(&b_priv);
         let s_a = compute_shared_secret(&a_priv, &b_pub);
