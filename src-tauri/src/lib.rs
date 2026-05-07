@@ -86,6 +86,7 @@ pub fn run() {
             wt::wt_open_uni,
             wt::wt_send,
             wt::wt_recv,
+            wt::envelope::wt_recv_envelope,
             wt::wt_close_stream,
             wt::wt_close,
             attach::tether_attach_subscribe,

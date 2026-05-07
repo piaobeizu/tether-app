@@ -28,4 +28,9 @@ pub enum WtError {
 
     #[error("io error: {0}")]
     Io(String),
+
+    /// Wire-envelope (slice #3) layer error: malformed JSON, bad
+    /// length-prefix, AEAD auth failure, unsupported keyVersion.
+    #[error("envelope error: {0}")]
+    Envelope(String),
 }

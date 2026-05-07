@@ -197,6 +197,52 @@ describe("transport/wt", () => {
     });
   });
 
+  it("recvEnvelope() invokes wt_recv_envelope with streamId + sessionId and surfaces decrypted shape", async () => {
+    const decrypted = {
+      id: "11111111-1111-4111-8111-111111111111",
+      fromDeviceId: "device-cli-1",
+      toDeviceId: "device-app-2",
+      ts: 1714000000000,
+      kind: "output.agent-event",
+      body: '{"hello":"world"}',
+    };
+    mockInvoke
+      .mockResolvedValueOnce("session-env")
+      .mockResolvedValueOnce("stream-env") // openBidi
+      .mockResolvedValueOnce(decrypted); // recv_envelope
+
+    const { wt } = await import("./client");
+    const session = await wt.connect({
+      url: "https://x:4433/wt",
+      insecure: true,
+    });
+    const stream = await session.openBidi({ channelId: 0x02 });
+
+    const env = await stream.recvEnvelope("sess-X");
+    expect(mockInvoke).toHaveBeenLastCalledWith("wt_recv_envelope", {
+      streamId: "stream-env",
+      sessionId: "sess-X",
+    });
+    expect(env).toEqual(decrypted);
+  });
+
+  it("recvEnvelope() returns null on clean peer-close at frame boundary", async () => {
+    mockInvoke
+      .mockResolvedValueOnce("session-env-2")
+      .mockResolvedValueOnce("stream-env-2")
+      .mockResolvedValueOnce(null);
+
+    const { wt } = await import("./client");
+    const session = await wt.connect({
+      url: "https://x:4433/wt",
+      insecure: true,
+    });
+    const stream = await session.openBidi({ channelId: 0x02 });
+
+    const env = await stream.recvEnvelope("sess-X");
+    expect(env).toBeNull();
+  });
+
   it("recv() returns null on clean peer-close (Ok(None) → JS null)", async () => {
     mockInvoke
       .mockResolvedValueOnce("session-7")

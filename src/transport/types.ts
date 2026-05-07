@@ -76,9 +76,51 @@ export interface WtStream {
    */
   recv(): Promise<Uint8Array | null>;
   /**
+   * Read the next §3.3.1 wire-envelope frame off the stream and return
+   * the decrypted inner payload. Slice #3 — only valid on the events
+   * channel (channel-id 0x02). Returns `null` cleanly when the peer
+   * half-closes at a frame boundary.
+   *
+   * The Rust side does the AEAD open + AD verification + length-prefix
+   * framing (see `src-tauri/src/wt/envelope.rs`); the JS layer never
+   * sees raw ciphertext bytes. This is the v0.1 defense-in-depth posture
+   * — a webview-XSS bug cannot exfiltrate plaintext envelopes.
+   *
+   * The hardcoded v0.1 dev shared key is used; slice #4 (pairing) will
+   * route a per-session ECDH-negotiated key by the `sessionId` argument.
+   *
+   * @param sessionId — the cc session id, used in the AEAD AD
+   *   construction (must match what the daemon used when sealing).
+   */
+  recvEnvelope(sessionId: string): Promise<DecryptedEnvelope | null>;
+  /**
    * Explicitly evict the stream from the Rust-side registry. Idempotent.
    * Use after the JS side abandons a stream that hasn't yet seen a clean
    * peer-close (otherwise the registry row leaks until session close).
    */
   close(): Promise<void>;
+}
+
+/**
+ * Result of `WtStream.recvEnvelope`. Mirrors the Rust
+ * `wt::envelope::DecryptedEnvelope` (camelCase via serde).
+ *
+ * `body` is the inner-plaintext bytes interpreted as a UTF-8 JSON
+ * string — typically the JSON serialization of the daemon's
+ * `LocalEnvelope` (see `src/transport/envelope.ts`). Callers parse it
+ * with `JSON.parse(env.body)`.
+ */
+export interface DecryptedEnvelope {
+  /** UUID v4 — useful for client-side dedup + replay-window LRU. */
+  id: string;
+  fromDeviceId: string;
+  toDeviceId: string;
+  /** Sender wall-clock unix-millis. Used for the §3.3.1 ±5min replay
+   *  window check (caller-side; this layer doesn't enforce). */
+  ts: number;
+  /** §3.3.2 op kind, AD-bound (cannot be tampered without breaking
+   *  the AEAD tag). */
+  kind: string;
+  /** Inner plaintext as UTF-8. Usually JSON; parse it with JSON.parse. */
+  body: string;
 }

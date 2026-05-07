@@ -23,6 +23,7 @@
 //! per-session/stream state lives in a `dashmap` indexed by opaque u64 IDs
 //! that we serialize as strings to avoid 53-bit JS number truncation.
 
+pub mod envelope;
 mod error;
 mod state;
 
@@ -56,8 +57,9 @@ pub struct ConnectOptions {
     /// `serverCertificateHashes` shape, which is what
     /// `web-transport-quinn::ClientBuilder::with_server_certificate_hashes`
     /// consumes). The Go daemon prints this on startup as the "DER" hash;
-    /// see `internal/transport/wt::Server::DevCertSPKISHA256` (despite the
-    /// historical name, that returns the cert hash in W3C-DER form).
+    /// see `internal/transport/wt::Server::DevCertDERSHA256`. (Renamed
+    /// from `DevCertSPKISHA256` in slice #3 — the SPKI form did not
+    /// interop with the W3C / quinn pin algorithm.)
     ///
     /// When set:
     ///   - rustls verification = pin-only (no system roots, no insecure)

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { TetherWtError } from "./errors";
 import type {
+  DecryptedEnvelope,
   SessionId,
   StreamId,
   WtConnectOptions,
@@ -10,13 +11,16 @@ import type {
 } from "./types";
 
 // Rust command names — must match `#[tauri::command]` attrs in
-// src-tauri/src/wt/mod.rs.
+// src-tauri/src/wt/mod.rs (and src-tauri/src/wt/envelope.rs for
+// wt_recv_envelope, registered via `wt::envelope::wt_recv_envelope`
+// in lib.rs).
 const CMD = {
   connect: "wt_connect",
   open_bidi: "wt_open_bidi",
   open_uni: "wt_open_uni",
   send: "wt_send",
   recv: "wt_recv",
+  recv_envelope: "wt_recv_envelope",
   close_stream: "wt_close_stream",
   close: "wt_close",
 } as const;
@@ -45,6 +49,20 @@ class WtStreamImpl implements WtStream {
     });
     if (out === null) return null;
     return Uint8Array.from(out);
+  }
+
+  async recvEnvelope(sessionId: string): Promise<DecryptedEnvelope | null> {
+    // Rust returns either `null` (peer half-closed at frame boundary)
+    // or the camelCase serde-serialized DecryptedEnvelope. Numbers in
+    // JSON go through structuredClone-friendly types — `ts` arrives
+    // as a JS number. Inputs > 2^53 would lose precision; the source
+    // is `time.Now().UnixMilli()` which stays comfortably under that
+    // ceiling for the next ~285,000 years.
+    return await call<DecryptedEnvelope | null>(
+      "recv_envelope",
+      CMD.recv_envelope,
+      { streamId: this.id, sessionId },
+    );
   }
 
   /**
