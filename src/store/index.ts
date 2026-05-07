@@ -801,6 +801,14 @@ function makeActions(set: SetSlice, get: GetSlice): Actions {
         const transport = await import("@/transport/pair");
         await transport.pairConfirm(handleId);
         set({ pairHandleId: null, pairError: null });
+        // C2: AttachBridge's connect effect re-runs on
+        // attachReconnectAttempt change. Without this bump, the
+        // bridge stayed stuck in `needs-pair` even though the user
+        // just paired successfully — pickPairedDeviceId() never re-
+        // ran so the new long-term key on disk was never picked up.
+        // Bumping the counter triggers the effect → fresh
+        // pairListDevices read → bridge proceeds to connect.
+        get().triggerAttachReconnect();
         setTimeout(() => set({ pairMobileStep: "scan" }), 3000);
       } catch (e) {
         const reason =
