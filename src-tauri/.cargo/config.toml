@@ -1,0 +1,30 @@
+# Per-target linker config for Android cross-compile.
+#
+# These paths use the env var expansion helper that cargo gained in
+# 1.74+ (`{ANDROID_NDK_TOOLCHAIN_BIN}`). Set ANDROID_NDK_HOME and source
+# scripts/android-env.sh first to populate ANDROID_NDK_TOOLCHAIN_BIN +
+# the CC_<triple> env vars ring/cc-rs's build scripts need.
+#
+# Quick check pipeline:
+#   export ANDROID_NDK_HOME=/path/to/ndk-r26+
+#   source ../scripts/android-env.sh
+#   cargo check --target=aarch64-linux-android --lib
+#
+# Verified targets (NDK r26d, host linux-x86_64):
+#   aarch64-linux-android        # 64-bit ARM (modern phones; primary)
+#   armv7-linux-androideabi      # 32-bit ARM (older phones)
+#   x86_64-linux-android         # emulator x86_64
+#
+# minSdk = 21 per Tauri 2 Mobile floor. Bump alongside cargo-mobile2.
+
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android21-clang"
+
+[target.armv7-linux-androideabi]
+linker = "armv7a-linux-androideabi21-clang"
+
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android21-clang"
+
+[target.i686-linux-android]
+linker = "i686-linux-android21-clang"
