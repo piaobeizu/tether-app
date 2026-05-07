@@ -13,11 +13,11 @@ name = "tether_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.0", features = [] }
+tauri-build = { version = "2.6.1", features = [] }
 
 [dependencies]
 # --- Tauri core ---
-tauri = { version = "2.11.0", features = [] }
+tauri = { version = "2.11.1", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -26,45 +26,51 @@ serde_json = "1"
 # `ring` feature avoids aws-lc-rs (which needs cmake/CC for Android cross-build
 # and is the #1 reported friction point for `aarch64-linux-android`).
 web-transport-quinn = { version = "0.11.9", default-features = false, features = ["ring"] }
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "platform-verifier"] }
-rustls = { version = "0.23", default-features = false, features = ["std", "ring", "logging"] }
-url = "2"
-bytes = "1"
+quinn = { version = "0.11.9", default-features = false, features = ["runtime-tokio", "rustls-ring", "platform-verifier"] }
+rustls = { version = "0.23.40", default-features = false, features = ["std", "ring", "logging"] }
+url = "2.5.8"
+bytes = "1.11.1"
 
 # --- Async runtime ---
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "time", "net", "process"] }
+tokio = { version = "1.52.2", features = ["rt-multi-thread", "sync", "macros", "io-util", "time", "net", "process"] }
 
 # --- Plumbing for wt + attach modules ---
-dashmap = "6"           # concurrent map: SessionId/StreamId -> handle
-thiserror = "2"
-tracing = "0.1"
+dashmap = "6.1.0"       # concurrent map: SessionId/StreamId -> handle
+thiserror = "2.0.18"
+tracing = "0.1.44"
 
 # --- WT envelope crypto (slice #3) ---
 # XChaCha20-Poly1305 mirrors the Go side's chacha20poly1305.NewX with
 # 24-byte nonces; "default-features=false" + the explicit "alloc" +
 # "getrandom" drop std-only paths we don't need (Android cross-build).
-chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc", "getrandom"] }
 # base64 standard alphabet for the §3.3.1 nonce / ciphertext fields.
-base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
 
 # --- Pair protocol crypto (slice #4) ---
 # X25519 ECDH for ephemeral keypairs (spec §4 / §5).
-x25519-dalek = { version = "2", default-features = false, features = ["static_secrets", "zeroize"] }
+# `getrandom` feature is enabled so we can use the no-arg `StaticSecret::random()`
+# constructor — necessary because x25519-dalek 2.0.1 still pins `rand_core 0.6`
+# while we bump the top-level `rand` to 0.10 (which uses `rand_core 0.10`).
+# Decoupling the keypair RNG from the nonce RNG keeps the version graph clean.
+x25519-dalek = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize", "getrandom"] }
 # HKDF-SHA256 for sas_key / sas_bits / long_term_key / transport_binding_key derivation.
-hkdf = { version = "0.12", default-features = false }
+hkdf = { version = "0.13", default-features = false }
 # HMAC-SHA256 for pair.sas-confirm MAC computation.
-hmac = { version = "0.12", default-features = false }
+hmac = { version = "0.13", default-features = false }
 # SHA-256 for transcript hashing + HKDF/HMAC underlying.
-sha2 = { version = "0.10", default-features = false }
-# RNG for ephemeral keypairs + nonces.
-rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+sha2 = { version = "0.11", default-features = false }
+# RNG for nonces. `sys_rng` exposes `rand::rngs::SysRng` (the rand 0.10
+# successor to `OsRng`); we use it directly for ephemeral 16-byte nonces
+# and don't need the `thread_rng` machinery.
+rand = { version = "0.10", default-features = false, features = ["std", "sys_rng"] }
 # Directory lookup for the device registry path (~/.tether/users/<user>/devices/).
-dirs = "5"
+dirs = "6.0.0"
 # ISO-8601 timestamps for paired_at / lastSeen in the device record.
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "serde"] }
 # Attach socket bridge (Phase 9): cancellation token shared between the
 # Tauri command surface and the per-subscription read-loop task.
-tokio-util = { version = "0.7", default-features = false }
+tokio-util = { version = "0.7.18", default-features = false }
 
 # --- Stronghold KDF (v0.1 ship-blocker B2) ---
 # argon2 0.5.x is pure Rust + optional `zeroize` (no `cc` build deps, so it
@@ -72,7 +78,7 @@ tokio-util = { version = "0.7", default-features = false }
 # --target=*-linux-android --lib`). We disable default features and re-enable
 # only `alloc` (we need a Vec<u8> output) + `zeroize` (defense-in-depth on the
 # transient stack copies of the derived key).
-argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
+argon2 = { version = "0.5.3", default-features = false, features = ["alloc", "zeroize"] }
 
 # --- Plugins (added as deps but NOT fully wired — capability registration
 # is left for the next slice; see tauri.conf.json + capabilities/) ---
