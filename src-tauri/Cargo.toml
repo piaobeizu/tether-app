@@ -66,6 +66,14 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 # Tauri command surface and the per-subscription read-loop task.
 tokio-util = { version = "0.7", default-features = false }
 
+# --- Stronghold KDF (v0.1 ship-blocker B2) ---
+# argon2 0.5.x is pure Rust + optional `zeroize` (no `cc` build deps, so it
+# cross-compiles cleanly to all Android targets — verified via `cargo check
+# --target=*-linux-android --lib`). We disable default features and re-enable
+# only `alloc` (we need a Vec<u8> output) + `zeroize` (defense-in-depth on the
+# transient stack copies of the derived key).
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
+
 # --- Plugins (added as deps but NOT fully wired — capability registration
 # is left for the next slice; see tauri.conf.json + capabilities/) ---
 tauri-plugin-fs = "2.5.1"
@@ -88,12 +96,6 @@ tauri-plugin-barcode-scanner = "2.4.4"
 default = []
 # Tauri 2 expects `custom-protocol` for production builds.
 custom-protocol = ["tauri/custom-protocol"]
-# Opt-in escape hatch for release builds while the Stronghold KDF is
-# still the non-cryptographic v0.1 placeholder. CI / smoke builds may
-# enable it; production artifacts MUST NOT (the lib.rs compile_error!
-# enforces this for default release builds). Delete this row at the
-# same time the placeholder is replaced with Argon2id.
-insecure-kdf = []
 
 [profile.release]
 panic = "abort"
