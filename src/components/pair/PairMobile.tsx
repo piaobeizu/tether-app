@@ -17,8 +17,10 @@ import { useTetherStore } from "@/store";
 export function PairMobile() {
   const pairMobileStep = useTetherStore((s) => s.pairMobileStep);
   const pairCode = useTetherStore((s) => s.pairCode);
+  const pairError = useTetherStore((s) => s.pairError);
   const setMobilePairStep = useTetherStore((s) => s.setMobilePairStep);
   const confirmPair = useTetherStore((s) => s.confirmPair);
+  const abortPair = useTetherStore((s) => s.abortPair);
 
   return (
     <PhoneFrame
@@ -160,12 +162,29 @@ export function PairMobile() {
               <FpRow k="code" v={pairCode} big />
             </div>
 
+            {pairError !== null ? (
+              <div
+                data-testid="pair-error"
+                className="mono"
+                style={{
+                  marginTop: 12,
+                  fontSize: 11,
+                  color: "var(--danger, #c83030)",
+                }}
+              >
+                {pairError}
+              </div>
+            ) : null}
+
             <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
               <button
                 type="button"
                 className="m-btn-ghost"
                 style={{ flex: 1 }}
-                onClick={() => setMobilePairStep("scan")}
+                onClick={() => {
+                  void abortPair("user-cancel");
+                  setMobilePairStep("scan");
+                }}
               >
                 cancel
               </button>
@@ -173,7 +192,9 @@ export function PairMobile() {
                 type="button"
                 className="m-btn-primary"
                 style={{ flex: 2 }}
-                onClick={confirmPair}
+                onClick={() => {
+                  void confirmPair();
+                }}
               >
                 <Icon name="check" size={14} />
                 &nbsp;confirm

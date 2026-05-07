@@ -46,6 +46,22 @@ tracing = "0.1"
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
 # base64 standard alphabet for the §3.3.1 nonce / ciphertext fields.
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+
+# --- Pair protocol crypto (slice #4) ---
+# X25519 ECDH for ephemeral keypairs (spec §4 / §5).
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets", "zeroize"] }
+# HKDF-SHA256 for sas_key / sas_bits / long_term_key / transport_binding_key derivation.
+hkdf = { version = "0.12", default-features = false }
+# HMAC-SHA256 for pair.sas-confirm MAC computation.
+hmac = { version = "0.12", default-features = false }
+# SHA-256 for transcript hashing + HKDF/HMAC underlying.
+sha2 = { version = "0.10", default-features = false }
+# RNG for ephemeral keypairs + nonces.
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+# Directory lookup for the device registry path (~/.tether/users/<user>/devices/).
+dirs = "5"
+# ISO-8601 timestamps for paired_at / lastSeen in the device record.
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 # Attach socket bridge (Phase 9): cancellation token shared between the
 # Tauri command surface and the per-subscription read-loop task.
 tokio-util = { version = "0.7", default-features = false }
