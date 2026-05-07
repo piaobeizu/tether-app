@@ -38,6 +38,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-ut
 dashmap = "6"           # concurrent map: SessionId/StreamId -> handle
 thiserror = "2"
 tracing = "0.1"
+
+# --- WT envelope crypto (slice #3) ---
+# XChaCha20-Poly1305 mirrors the Go side's chacha20poly1305.NewX with
+# 24-byte nonces; "default-features=false" + the explicit "alloc" +
+# "getrandom" drop std-only paths we don't need (Android cross-build).
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+# base64 standard alphabet for the §3.3.1 nonce / ciphertext fields.
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 # Attach socket bridge (Phase 9): cancellation token shared between the
 # Tauri command surface and the per-subscription read-loop task.
 tokio-util = { version = "0.7", default-features = false }

@@ -13,6 +13,7 @@
 // Rust crate: `web-transport-quinn` 0.11.9 (kixelated, actively maintained).
 
 export type {
+  DecryptedEnvelope,
   WtConnectOptions,
   WtOpenStreamOptions,
   WtSession,
