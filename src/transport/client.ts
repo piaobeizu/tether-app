@@ -4,6 +4,7 @@ import type {
   SessionId,
   StreamId,
   WtConnectOptions,
+  WtOpenStreamOptions,
   WtSession,
   WtStream,
 } from "./types";
@@ -62,19 +63,42 @@ class WtStreamImpl implements WtStream {
   }
 }
 
+function streamOpts(opts?: WtOpenStreamOptions): Record<string, unknown> | null {
+  if (!opts) return null;
+  // Validate channel-id at the boundary so the Rust side gets a clean u8
+  // and so the error surfaces close to the call site.
+  if (opts.channelId !== undefined) {
+    if (
+      !Number.isInteger(opts.channelId) ||
+      opts.channelId < 0 ||
+      opts.channelId > 255
+    ) {
+      throw new TetherWtError(
+        "open_stream",
+        `channelId must be an integer 0-255 (got ${opts.channelId})`,
+      );
+    }
+  }
+  return {
+    channelId: opts.channelId ?? null,
+  };
+}
+
 class WtSessionImpl implements WtSession {
   constructor(public readonly id: SessionId) {}
 
-  async openBidi(): Promise<WtStream> {
+  async openBidi(opts?: WtOpenStreamOptions): Promise<WtStream> {
     const sid = await call<StreamId>("open_bidi", CMD.open_bidi, {
       sessionId: this.id,
+      options: streamOpts(opts),
     });
     return new WtStreamImpl(sid);
   }
 
-  async openUni(): Promise<WtStream> {
+  async openUni(opts?: WtOpenStreamOptions): Promise<WtStream> {
     const sid = await call<StreamId>("open_uni", CMD.open_uni, {
       sessionId: this.id,
+      options: streamOpts(opts),
     });
     return new WtStreamImpl(sid);
   }
@@ -92,11 +116,25 @@ class WtSessionImpl implements WtSession {
  */
 export const wt = {
   async connect(opts: WtConnectOptions): Promise<WtSession> {
+    // Validate the pin/insecure invariant client-side too so the error
+    // is reported close to the call site rather than after a Tauri
+    // round-trip. The Rust side enforces the same rule.
+    if (
+      opts.insecure &&
+      opts.pinnedCertSha256 &&
+      opts.pinnedCertSha256.length > 0
+    ) {
+      throw new TetherWtError(
+        "connect",
+        "pinnedCertSha256 and insecure are mutually exclusive",
+      );
+    }
     const sid = await call<SessionId>("connect", CMD.connect, {
       url: opts.url,
       options: {
         alpn: opts.alpn ?? null,
         insecure: opts.insecure ?? false,
+        pinnedCertSha256: opts.pinnedCertSha256 ?? null,
         timeoutMs: opts.timeoutMs ?? 10_000,
       },
     });

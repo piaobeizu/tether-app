@@ -12,6 +12,11 @@
 // Underlying Rust commands: see `src-tauri/src/wt/mod.rs`.
 // Rust crate: `web-transport-quinn` 0.11.9 (kixelated, actively maintained).
 
-export type { WtConnectOptions, WtSession, WtStream } from "./types";
+export type {
+  WtConnectOptions,
+  WtOpenStreamOptions,
+  WtSession,
+  WtStream,
+} from "./types";
 export { wt } from "./client";
 export { TetherWtError } from "./errors";

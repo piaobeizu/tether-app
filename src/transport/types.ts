@@ -15,18 +15,51 @@ export interface WtConnectOptions {
    */
   alpn?: string;
   /**
-   * If true, accept self-signed / dev TLS certs. Production builds should
-   * leave this false. Plumbed through to `quinn::ClientConfig`.
+   * Dev escape hatch — accept self-signed / dev TLS certs. Production
+   * builds should leave this false.
+   *
+   * Mutually exclusive with `pinnedCertSha256`: setting both is rejected
+   * Rust-side with `WtError::Tls("...mutually exclusive")`. For dev
+   * daemons prefer `pinnedCertSha256` (which still validates the
+   * server's identity against a known fingerprint).
    */
   insecure?: boolean;
+  /**
+   * Hex-encoded sha256 of the server's DER-encoded x509 cert (W3C
+   * `serverCertificateHashes` shape — what
+   * `web-transport-quinn::with_server_certificate_hashes` consumes).
+   *
+   * The Go daemon prints this on startup as the "DER" hash; pass it
+   * verbatim ("deadbeef..." or colon-separated "de:ad:be:ef:..." both
+   * accepted). When set, the client validates the server's leaf cert
+   * by exact hash match — system trust store and `insecure` are both
+   * bypassed.
+   *
+   * Multiple hashes can be passed for cert rotation windows.
+   */
+  pinnedCertSha256?: string[];
   /** Connect-attempt timeout in milliseconds. Default 10_000. */
   timeoutMs?: number;
 }
 
+/**
+ * Per-stream open options. `channelId` is the spec §3.3.3 1-byte
+ * stream-prefix the daemon uses to demultiplex into the 4 logical
+ * channels (control / events / agent-bytes / catch-up). When set, the
+ * Rust side writes the byte BEFORE returning the handle, so the JS
+ * shim never has to remember to push it first. Leaving it `undefined`
+ * yields a raw stream with no prefix — used by the echo smoke test
+ * and any future raw-stream consumer.
+ */
+export interface WtOpenStreamOptions {
+  /** 0-255. The byte is written atomically as the stream's first frame. */
+  channelId?: number;
+}
+
 export interface WtSession {
   readonly id: SessionId;
-  openBidi(): Promise<WtStream>;
-  openUni(): Promise<WtStream>;
+  openBidi(opts?: WtOpenStreamOptions): Promise<WtStream>;
+  openUni(opts?: WtOpenStreamOptions): Promise<WtStream>;
   close(): Promise<void>;
 }
 
