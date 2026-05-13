@@ -114,9 +114,34 @@ export async function connectWtAttach(
   const pinned = (args.pinnedCertSha256 ?? "").trim();
   const pinnedList = pinned.length > 0 ? [pinned] : undefined;
 
+  // Fetch a short-lived WT ticket via HTTP (which carries the session cookie).
+  // Chrome's WebTransport CONNECT does not send cookies, so the ticket is
+  // passed as ?ticket= in the WT URL instead.
+  let wtUrl: string;
+  try {
+    const ticketBase = new URL(args.daemonUrl);
+    ticketBase.pathname = "/api/v1/auth/wt-ticket";
+    ticketBase.search = "";
+    const ticketRes = await fetch(ticketBase.toString(), { method: "POST" });
+    if (!ticketRes.ok) {
+      throw new TetherWtError(
+        "wt-ticket",
+        `ticket fetch failed: ${ticketRes.status}`,
+      );
+    }
+    const { ticket } = (await ticketRes.json()) as { ticket: string };
+    const wtUrlObj = new URL(args.daemonUrl);
+    wtUrlObj.searchParams.set("ticket", ticket);
+    wtUrl = wtUrlObj.toString();
+  } catch (e) {
+    if (e instanceof TetherWtError) throw e;
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new TetherWtError("wt-ticket", `ticket fetch error: ${msg}`);
+  }
+
   try {
     session = await wt.connect({
-      url: args.daemonUrl,
+      url: wtUrl,
       pinnedCertSha256: pinnedList,
     });
 
